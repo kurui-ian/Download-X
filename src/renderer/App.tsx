@@ -89,8 +89,12 @@ export const App: React.FC = () => {
       }
 
       // Category filter
-      if (categoryFilter !== 'all' && task.category !== categoryFilter) {
-        return false;
+      if (categoryFilter !== 'all') {
+        if (categoryFilter === 'torrent') {
+          if (task.category !== 'torrent' && task.protocol !== 'torrent') return false;
+        } else if (task.category !== categoryFilter) {
+          return false;
+        }
       }
 
       // Search query

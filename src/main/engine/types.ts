@@ -14,7 +14,10 @@ export type TaskCategory =
   | 'document'
   | 'archive'
   | 'program'
+  | 'torrent'
   | 'other';
+
+export type TaskProtocol = 'http' | 'torrent';
 
 export interface ChunkInfo {
   id: number;
@@ -24,6 +27,12 @@ export interface ChunkInfo {
   totalBytes: number;
   status: 'pending' | 'downloading' | 'completed' | 'failed';
   speed: number; // bytes per second for this chunk
+}
+
+export interface TorrentFileInfo {
+  name: string;
+  path: string;
+  length: number;
 }
 
 export interface DownloadTask {
@@ -45,6 +54,14 @@ export interface DownloadTask {
   createdAt: number;
   completedAt?: number;
   errorMessage?: string;
+
+  // Torrent extensions
+  protocol?: TaskProtocol;
+  infoHash?: string;
+  peers?: number;
+  uploadSpeed?: number;
+  uploadedBytes?: number;
+  torrentFiles?: TorrentFileInfo[];
 }
 
 export interface UrlInspectionResult {
@@ -55,6 +72,9 @@ export interface UrlInspectionResult {
   supportsRanges: boolean;
   mimeType: string;
   category: TaskCategory;
+  isTorrent?: boolean;
+  infoHash?: string;
+  torrentFiles?: TorrentFileInfo[];
 }
 
 export interface AppSettings {
@@ -72,4 +92,5 @@ export interface GlobalSpeedStats {
   activeCount: number;
   queuedCount: number;
   completedCount: number;
+  totalUploadSpeed?: number;
 }

@@ -6,6 +6,7 @@ import {
   FileArchive, 
   FileCode, 
   FileQuestion,
+  Radio,
   LucideIcon 
 } from 'lucide-react';
 import { TaskCategory } from '../types';
@@ -51,6 +52,13 @@ export function getCategoryBadge(category: TaskCategory): {
         bgColor: 'bg-blue-500/10',
         textColor: 'text-blue-400',
         borderColor: 'border-blue-500/20',
+      };
+    case 'torrent':
+      return {
+        icon: Radio,
+        bgColor: 'bg-cyan-500/10',
+        textColor: 'text-cyan-400',
+        borderColor: 'border-cyan-500/20',
       };
     default:
       return {

@@ -214,6 +214,19 @@ function setupIpc() {
     return null;
   });
 
+  ipcMain.handle('dialog:select-torrent-file', async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [{ name: 'BitTorrent Files (*.torrent)', extensions: ['torrent'] }],
+      title: 'Select .torrent File',
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      return result.filePaths[0];
+    }
+    return null;
+  });
+
   ipcMain.handle('settings:get', () => {
     return store.getSettings();
   });

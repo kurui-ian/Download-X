@@ -3,10 +3,20 @@ import https from 'https';
 import { URL } from 'url';
 import path from 'path';
 import { TaskCategory, UrlInspectionResult } from './types';
+import { TorrentEngine } from './TorrentEngine';
 
 export function normalizeUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (trimmed.toLowerCase().startsWith('magnet:?')) {
+    const match = trimmed.match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
+    if (match) {
+      return `magnet:?xt=urn:btih:${match[1].toLowerCase()}`;
+    }
+    return trimmed.toLowerCase();
+  }
+
   try {
-    const parsed = new URL(rawUrl.trim());
+    const parsed = new URL(trimmed);
     // Strip tracking parameters
     const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'si', 'feature', 'fbclid', 'gclid'];
     for (const p of trackingParams) {
@@ -23,7 +33,7 @@ export function normalizeUrl(rawUrl: string): string {
     }
     return norm;
   } catch {
-    return rawUrl.trim().toLowerCase();
+    return trimmed.toLowerCase();
   }
 }
 
@@ -367,6 +377,10 @@ export function extractFileNameFromUrl(rawUrl: string, headers?: http.IncomingHt
 
 export async function inspectUrl(targetUrl: string, maxRedirects = 8): Promise<UrlInspectionResult> {
   let cleanUrl = targetUrl.trim();
+  if (TorrentEngine.getInstance().isTorrentSource(cleanUrl)) {
+    return await TorrentEngine.getInstance().inspectTorrent(cleanUrl);
+  }
+
   if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
     cleanUrl = 'https://' + cleanUrl;
   }

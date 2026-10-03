@@ -13,7 +13,8 @@ import {
   Archive,
   Terminal,
   Settings,
-  Activity
+  Activity,
+  Radio
 } from 'lucide-react';
 import { TaskCategory, TaskStatus, GlobalSpeedStats, DownloadTask } from '../types';
 import { formatSpeed } from '../utils/formatters';
@@ -57,6 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const categoryCounts: Record<TaskCategory, number> = {
     all: tasks.length,
+    torrent: tasks.filter((t) => t.category === 'torrent' || t.protocol === 'torrent').length,
     video: tasks.filter((t) => t.category === 'video').length,
     audio: tasks.filter((t) => t.category === 'audio').length,
     document: tasks.filter((t) => t.category === 'document').length,
@@ -67,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const categoryItems: { id: TaskCategory; label: string; icon: React.ElementType }[] = [
     { id: 'all', label: 'All Files', icon: Zap },
+    { id: 'torrent', label: 'Torrents', icon: Radio },
     { id: 'video', label: 'Videos', icon: Film },
     { id: 'audio', label: 'Music & Audio', icon: Music },
     { id: 'document', label: 'Documents', icon: FileText },

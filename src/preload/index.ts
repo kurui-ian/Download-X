@@ -23,6 +23,7 @@ export interface ElectronAPI {
   openFolder: (id: string) => Promise<boolean>;
   inspectUrl: (url: string) => Promise<UrlInspectionResult>;
   selectDirectory: () => Promise<string | null>;
+  selectTorrentFile: () => Promise<string | null>;
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: AppSettings) => Promise<boolean>;
   onTasksUpdated: (callback: (tasks: DownloadTask[]) => void) => () => void;
@@ -45,6 +46,7 @@ const api: ElectronAPI = {
   openFolder: (id) => ipcRenderer.invoke('tasks:open-folder', id),
   inspectUrl: (url) => ipcRenderer.invoke('url:inspect', url),
   selectDirectory: () => ipcRenderer.invoke('dialog:select-dir'),
+  selectTorrentFile: () => ipcRenderer.invoke('dialog:select-torrent-file'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   onTasksUpdated: (callback) => {

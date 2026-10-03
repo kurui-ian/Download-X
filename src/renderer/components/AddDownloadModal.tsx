@@ -8,7 +8,8 @@ import {
   AlertTriangle, 
   Loader2, 
   CheckCircle2, 
-  ClipboardPaste 
+  ClipboardPaste,
+  Radio
 } from 'lucide-react';
 import { DownloadTask, UrlInspectionResult } from '../types';
 import { formatBytes } from '../utils/formatters';
@@ -57,10 +58,17 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       // Automatically read native clipboard
       if (window.electronAPI?.readClipboard) {
         window.electronAPI.readClipboard().then((clip) => {
-          if (clip && (clip.trim().startsWith('http://') || clip.trim().startsWith('https://'))) {
+          if (clip) {
             const clean = clip.trim();
-            setUrl(clean);
-            triggerInspect(clean);
+            if (
+              clean.startsWith('http://') || 
+              clean.startsWith('https://') || 
+              clean.startsWith('magnet:?') || 
+              clean.toLowerCase().endsWith('.torrent')
+            ) {
+              setUrl(clean);
+              triggerInspect(clean);
+            }
           }
         }).catch(() => {});
       }
@@ -76,7 +84,12 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
   const triggerInspect = async (targetUrl: string) => {
     const clean = targetUrl.trim();
-    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    if (
+      !clean.startsWith('http://') && 
+      !clean.startsWith('https://') && 
+      !clean.startsWith('magnet:?') && 
+      !clean.toLowerCase().endsWith('.torrent')
+    ) {
       return;
     }
 
@@ -120,6 +133,20 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     }
   };
 
+  const handleBrowseTorrentFile = async () => {
+    try {
+      if (window.electronAPI?.selectTorrentFile) {
+        const selected = await window.electronAPI.selectTorrentFile();
+        if (selected) {
+          setUrl(selected);
+          triggerInspect(selected);
+        }
+      }
+    } catch (err) {
+      console.error('Error selecting torrent file:', err);
+    }
+  };
+
   const handleBrowseDir = async () => {
     try {
       const chosen = await window.electronAPI.selectDirectory();
@@ -153,6 +180,10 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     triggerInspect(sampleUrl);
   };
 
+  const isTorrent = url.trim().toLowerCase().startsWith('magnet:?') || 
+                    url.trim().toLowerCase().endsWith('.torrent') || 
+                    Boolean(inspection?.isTorrent);
+
   if (!isOpen) return null;
 
   return (
@@ -164,12 +195,20 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/80">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-              <Globe className="w-4 h-4" />
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+              isTorrent ? 'bg-cyan-500/20 border border-cyan-500/30 text-cyan-400' : 'bg-blue-500/20 border border-blue-500/30 text-blue-400'
+            }`}>
+              {isTorrent ? <Radio className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Add Download Task</h2>
-              <p className="text-[11px] text-slate-400">Enter a URL to start multi-part accelerated downloading</p>
+              <h2 className="text-sm font-bold text-white">
+                {isTorrent ? 'Add BitTorrent / Magnet Download' : 'Add Download Task'}
+              </h2>
+              <p className="text-[11px] text-slate-400">
+                {isTorrent 
+                  ? 'High-speed peer-to-peer torrent transfer' 
+                  : 'Enter URL or Magnet to start multi-part accelerated download'}
+              </p>
             </div>
           </div>
           <button
@@ -183,20 +222,30 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* URL Input with Paste Button */}
+          {/* URL Input with Actions */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-slate-200">
-                Download URL
+                Download URL / Magnet / .torrent Path
               </label>
-              <button
-                type="button"
-                onClick={handlePasteFromClipboard}
-                className="flex items-center gap-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 hover:underline"
-              >
-                <ClipboardPaste className="w-3 h-3" />
-                <span>Paste from Clipboard</span>
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleBrowseTorrentFile}
+                  className="flex items-center gap-1 text-[11px] font-medium text-cyan-400 hover:text-cyan-300 hover:underline"
+                >
+                  <Radio className="w-3 h-3" />
+                  <span>Open .torrent</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePasteFromClipboard}
+                  className="flex items-center gap-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 hover:underline"
+                >
+                  <ClipboardPaste className="w-3 h-3" />
+                  <span>Paste</span>
+                </button>
+              </div>
             </div>
 
             <div className="relative flex items-center">
@@ -216,8 +265,8 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                     triggerInspect(url);
                   }
                 }}
-                placeholder="https://example.com/file.zip"
-                className="w-full bg-slate-950 border border-slate-750 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 outline-none pr-24"
+                placeholder="https://... or magnet:?xt=urn:btih:... or file.torrent"
+                className="w-full bg-slate-950 border border-slate-750 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 outline-none pr-24 font-mono"
               />
               <div className="absolute right-1.5 flex items-center gap-1">
                 <button
@@ -246,21 +295,29 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                 onClick={() => setSampleUrl('https://proof.ovh.net/files/10Mb.dat')}
                 className="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
               >
-                10 MB Test
+                10 MB HTTP
               </button>
               <button
                 type="button"
                 onClick={() => setSampleUrl('https://proof.ovh.net/files/100Mb.dat')}
                 className="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
               >
-                100 MB Test
+                100 MB HTTP
               </button>
               <button
                 type="button"
-                onClick={() => setSampleUrl('https://nodejs.org/dist/v22.11.0/node-v22.11.0-x64.msi')}
+                onClick={() => setSampleUrl('magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny')}
+                className="text-[10px] px-2 py-0.5 bg-cyan-950/80 hover:bg-cyan-900/80 text-cyan-300 hover:text-cyan-100 rounded border border-cyan-800/40 transition-colors flex items-center gap-1 font-medium"
+              >
+                <Radio className="w-2.5 h-2.5" />
+                <span>Big Buck Bunny (Magnet)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSampleUrl('https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso.torrent')}
                 className="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
               >
-                Node.js MSI (30MB)
+                Ubuntu ISO (.torrent)
               </button>
             </div>
           </div>
@@ -311,15 +368,27 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
             <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
               <div className="space-y-0.5">
                 <div className="font-semibold text-slate-200">
-                  Size: {formatBytes(inspection.fileSize)}
+                  Size: {inspection.fileSize > 0 ? formatBytes(inspection.fileSize) : 'Resolving swarm metadata...'}
                 </div>
                 <div className="text-[11px] text-slate-400">
-                  Category: <span className="capitalize text-brand-400 font-semibold">{inspection.category}</span>
+                  Type:{' '}
+                  <span className={`capitalize font-semibold ${isTorrent ? 'text-cyan-400' : 'text-brand-400'}`}>
+                    {isTorrent ? 'BitTorrent' : inspection.category}
+                  </span>
+                  {inspection.torrentFiles && inspection.torrentFiles.length > 0 && (
+                    <span className="text-slate-500 ml-1.5 font-normal">
+                      ({inspection.torrentFiles.length} files)
+                    </span>
+                  )}
                 </div>
               </div>
 
               <div>
-                {inspection.supportsRanges ? (
+                {isTorrent ? (
+                  <span className="flex items-center gap-1 text-[11px] font-medium text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2.5 py-1 rounded-full">
+                    <Radio className="w-3.5 h-3.5" /> P2P Swarm
+                  </span>
+                ) : inspection.supportsRanges ? (
                   <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
                     <CheckCircle2 className="w-3.5 h-3.5" /> Range Supported (Fast)
                   </span>
@@ -335,20 +404,20 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
           {inspectError && (
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-400" />
-              <span>{inspectError} (Download will still start)</span>
+              <span>{inspectError} (Download will still attempt to connect)</span>
             </div>
           )}
 
           {/* Save Filename */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              File Name (Optional)
+              File / Folder Name
             </label>
             <input
               type="text"
               value={fileName}
               onChange={(e) => setFileName(e.target.value)}
-              placeholder="Auto-detected if left empty"
+              placeholder="Auto-detected from metadata"
               className="w-full bg-slate-950 border border-slate-750 focus:border-blue-500 rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 outline-none"
             />
           </div>
@@ -376,24 +445,26 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
             </div>
           </div>
 
-          {/* Parallel Connections Slider */}
-          <div>
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-300 mb-1.5">
-              <span className="flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-blue-400" />
-                <span>Parallel Connections</span>
-              </span>
-              <span className="font-mono text-blue-400 font-bold">{threadCount} threads</span>
+          {/* Parallel Connections Slider (HTTP only) */}
+          {!isTorrent && (
+            <div>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-300 mb-1.5">
+                <span className="flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Parallel Connections</span>
+                </span>
+                <span className="font-mono text-blue-400 font-bold">{threadCount} threads</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="16"
+                value={threadCount}
+                onChange={(e) => setThreadCount(Number(e.target.value))}
+                className="w-full accent-blue-500 cursor-pointer"
+              />
             </div>
-            <input
-              type="range"
-              min="1"
-              max="16"
-              value={threadCount}
-              onChange={(e) => setThreadCount(Number(e.target.value))}
-              className="w-full accent-blue-500 cursor-pointer"
-            />
-          </div>
+          )}
 
           {/* Auto Start Checkbox */}
           <div className="flex items-center gap-2 pt-1">
@@ -420,7 +491,11 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition-all transform active:scale-95"
+              className={`px-5 py-2.5 font-semibold text-xs rounded-xl shadow-lg transition-all transform active:scale-95 text-white ${
+                isTorrent
+                  ? 'bg-cyan-600 hover:bg-cyan-500 shadow-cyan-600/30'
+                  : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/30'
+              }`}
             >
               {autoStart ? 'Download Now' : 'Add to Queue'}
             </button>

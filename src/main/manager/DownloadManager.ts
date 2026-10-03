@@ -3,6 +3,7 @@ import fs from 'fs';
 import { BrowserWindow, shell, Notification } from 'electron';
 import { DownloadTask, GlobalSpeedStats, TaskCategory } from '../engine/types';
 import { Downloader } from '../engine/Downloader';
+import { TorrentEngine } from '../engine/TorrentEngine';
 import { 
   inspectUrl, 
   sanitizeFileName, 
@@ -36,9 +37,12 @@ export class DownloadManager {
     this.store = store;
     const loadedTasks = this.store.getTasks();
     for (const t of loadedTasks) {
+      if (t.url && TorrentEngine.getInstance().isTorrentSource(t.url)) {
+        t.protocol = 'torrent';
+      }
       // Ensure category is accurately categorized for legacy/saved tasks
       if (!t.category || t.category === 'other' || t.category === 'all') {
-        t.category = categorizeFileName(t.fileName, '', t.finalUrl || t.url);
+        t.category = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, '', t.finalUrl || t.url);
       }
       this.tasks.set(t.id, t);
     }
@@ -73,8 +77,8 @@ export class DownloadManager {
             } catch {}
           }
         }
-        const expectedCat = categorizeFileName(t.fileName, '', t.finalUrl || t.url);
-        if (t.category !== expectedCat) {
+        const expectedCat = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, '', t.finalUrl || t.url);
+        if (t.category !== expectedCat && t.category === 'other') {
           t.category = expectedCat;
           changed = true;
         }
@@ -108,7 +112,9 @@ export class DownloadManager {
   public async addDownload(params: AddDownloadParams): Promise<DownloadTask> {
     const settings = this.store.getSettings();
     let cleanUrl = params.url.trim();
-    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+    const isTorrent = TorrentEngine.getInstance().isTorrentSource(cleanUrl);
+
+    if (!isTorrent && !cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
       cleanUrl = 'https://' + cleanUrl;
     }
 
@@ -134,18 +140,31 @@ export class DownloadManager {
     // Determine initial fileName smartly
     let initialFileName = params.fileName ? sanitizeFileName(params.fileName) : '';
     if (!initialFileName) {
-      initialFileName = extractFileNameFromUrl(cleanUrl);
+      if (isTorrent) {
+        let dnMatch = cleanUrl.match(/dn=([^&]+)/i);
+        if (dnMatch) {
+          initialFileName = sanitizeFileName(decodeURIComponent(dnMatch[1].replace(/\+/g, ' ')));
+        } else if (cleanUrl.toLowerCase().endsWith('.torrent')) {
+          initialFileName = path.basename(cleanUrl, '.torrent');
+        } else {
+          initialFileName = `Torrent_${Date.now()}`;
+        }
+      } else {
+        initialFileName = extractFileNameFromUrl(cleanUrl);
+      }
     }
 
     // Check YouTube video title fallback if name is still numeric or generic
-    const ytId = extractYouTubeVideoId(cleanUrl);
-    if (ytId && isNumericOrHashOnly(initialFileName)) {
-      try {
-        const ytTitle = await fetchYouTubeTitle(ytId);
-        if (ytTitle) {
-          initialFileName = ensureFileExtension(ytTitle, '', cleanUrl);
-        }
-      } catch {}
+    if (!isTorrent) {
+      const ytId = extractYouTubeVideoId(cleanUrl);
+      if (ytId && isNumericOrHashOnly(initialFileName)) {
+        try {
+          const ytTitle = await fetchYouTubeTitle(ytId);
+          if (ytTitle) {
+            initialFileName = ensureFileExtension(ytTitle, '', cleanUrl);
+          }
+        } catch {}
+      }
     }
 
     if (!initialFileName) {
@@ -163,7 +182,7 @@ export class DownloadManager {
 
     const taskId = (Date.now().toString(36) + Math.random().toString(36).substring(2, 6)).toLowerCase();
     const threadCount = params.threadCount || settings.defaultConnections || 8;
-    const initialCategory = categorizeFileName(path.basename(finalPath), '', cleanUrl);
+    const initialCategory: TaskCategory = isTorrent ? 'torrent' : categorizeFileName(path.basename(finalPath), '', cleanUrl);
 
     const task: DownloadTask = {
       id: taskId,
@@ -175,13 +194,14 @@ export class DownloadManager {
       downloadedBytes: 0,
       status: 'connecting',
       category: initialCategory,
-      supportsRanges: false,
-      threadCount: 1,
+      supportsRanges: isTorrent ? true : false,
+      threadCount: isTorrent ? 1 : 1,
       chunks: [],
       speed: 0,
       eta: 0,
       progress: 0,
       createdAt: Date.now(),
+      protocol: isTorrent ? 'torrent' : 'http',
     };
 
     // Store and immediately show task in UI!
@@ -196,8 +216,14 @@ export class DownloadManager {
         task.finalUrl = inspection.finalUrl;
         task.fileSize = inspection.fileSize;
         task.supportsRanges = inspection.supportsRanges;
-        task.category = inspection.category;
+        task.category = isTorrent ? 'torrent' : inspection.category;
         task.threadCount = inspection.supportsRanges ? threadCount : 1;
+        if (inspection.infoHash) {
+          task.infoHash = inspection.infoHash;
+        }
+        if (inspection.torrentFiles && inspection.torrentFiles.length > 0) {
+          task.torrentFiles = inspection.torrentFiles;
+        }
 
         if (!params.fileName && inspection.fileName && inspection.fileName !== task.fileName) {
           if (!isNumericOrHashOnly(inspection.fileName) || isNumericOrHashOnly(task.fileName)) {
@@ -216,7 +242,9 @@ export class DownloadManager {
             }
             task.fileName = path.basename(updatedPath);
             task.savePath = updatedPath;
-            task.category = categorizeFileName(task.fileName, inspection.mimeType, task.finalUrl);
+            if (!isTorrent) {
+              task.category = categorizeFileName(task.fileName, inspection.mimeType, task.finalUrl);
+            }
           }
         }
 
@@ -238,16 +266,21 @@ export class DownloadManager {
   }
 
   public pauseDownload(id: string): void {
-    const downloader = this.downloaders.get(id);
-    if (downloader) {
-      downloader.pause();
-      this.downloaders.delete(id);
+    const task = this.tasks.get(id);
+    if (task && task.protocol === 'torrent') {
+      TorrentEngine.getInstance().pauseTorrent(id);
+    } else {
+      const downloader = this.downloaders.get(id);
+      if (downloader) {
+        downloader.pause();
+        this.downloaders.delete(id);
+      }
     }
 
-    const task = this.tasks.get(id);
     if (task && task.status !== 'completed') {
       task.status = 'paused';
       task.speed = 0;
+      task.uploadSpeed = 0;
       task.eta = 0;
       this.scheduleSave();
       this.broadcastTasks();
@@ -267,23 +300,27 @@ export class DownloadManager {
   }
 
   public cancelDownload(id: string, deleteFile: boolean = false): void {
-    const downloader = this.downloaders.get(id);
-    if (downloader) {
-      downloader.cancel(deleteFile);
-      this.downloaders.delete(id);
-    } else if (deleteFile) {
-      const task = this.tasks.get(id);
-      if (task && fs.existsSync(task.savePath)) {
-        try {
-          fs.unlinkSync(task.savePath);
-        } catch {}
+    const task = this.tasks.get(id);
+    if (task && task.protocol === 'torrent') {
+      TorrentEngine.getInstance().cancelTorrent(id, deleteFile);
+    } else {
+      const downloader = this.downloaders.get(id);
+      if (downloader) {
+        downloader.cancel(deleteFile);
+        this.downloaders.delete(id);
+      } else if (deleteFile) {
+        if (task && fs.existsSync(task.savePath)) {
+          try {
+            fs.unlinkSync(task.savePath);
+          } catch {}
+        }
       }
     }
 
-    const task = this.tasks.get(id);
     if (task) {
       task.status = 'cancelled';
       task.speed = 0;
+      task.uploadSpeed = 0;
       this.scheduleSave();
       this.broadcastTasks();
     }
@@ -305,8 +342,12 @@ export class DownloadManager {
     }
     for (const task of this.tasks.values()) {
       if (task.status === 'downloading' || task.status === 'queued') {
+        if (task.protocol === 'torrent') {
+          TorrentEngine.getInstance().pauseTorrent(task.id);
+        }
         task.status = 'paused';
         task.speed = 0;
+        task.uploadSpeed = 0;
         task.eta = 0;
       }
     }
@@ -376,6 +417,39 @@ export class DownloadManager {
   }
 
   private startDownloader(task: DownloadTask): void {
+    if (task.protocol === 'torrent') {
+      TorrentEngine.getInstance().startTorrent(
+        task,
+        (updatedTask) => {
+          this.tasks.set(updatedTask.id, updatedTask);
+          this.broadcastTasksThrottled();
+        },
+        (completedTask) => {
+          this.tasks.set(completedTask.id, completedTask);
+          this.scheduleSave();
+          this.broadcastTasks();
+
+          const settings = this.store.getSettings();
+          if (settings.enableNotifications && Notification.isSupported()) {
+            new Notification({
+              title: 'Torrent Download Complete',
+              body: `${completedTask.fileName} has finished downloading.`,
+              silent: false,
+            }).show();
+          }
+
+          this.processQueue();
+        },
+        (_err, errorTask) => {
+          this.tasks.set(errorTask.id, errorTask);
+          this.scheduleSave();
+          this.broadcastTasks();
+          this.processQueue();
+        }
+      );
+      return;
+    }
+
     if (this.downloaders.has(task.id)) {
       return;
     }
@@ -440,6 +514,7 @@ export class DownloadManager {
     const taskList = this.getTasks();
     const stats: GlobalSpeedStats = {
       totalSpeed: taskList.reduce((acc, t) => acc + (t.status === 'downloading' ? t.speed : 0), 0),
+      totalUploadSpeed: taskList.reduce((acc, t) => acc + (t.status === 'downloading' ? (t.uploadSpeed || 0) : 0), 0),
       activeCount: taskList.filter((t) => t.status === 'downloading').length,
       queuedCount: taskList.filter((t) => t.status === 'queued').length,
       completedCount: taskList.filter((t) => t.status === 'completed').length,
@@ -460,6 +535,7 @@ export class DownloadManager {
 
   public shutdown(): void {
     this.pauseAll();
+    TorrentEngine.getInstance().shutdown();
     this.store.saveTasks(Array.from(this.tasks.values()));
   }
 }

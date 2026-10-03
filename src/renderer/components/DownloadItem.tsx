@@ -102,9 +102,18 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
               <span className="font-mono text-slate-300">
                 {task.progress > 0 ? `${task.progress.toFixed(1)}%` : '0%'}
               </span>
-              {task.supportsRanges && (
+              {task.protocol === 'torrent' ? (
+                <span className="inline-block px-1.5 py-0.2 text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/40 rounded font-medium">
+                  BitTorrent
+                </span>
+              ) : task.supportsRanges ? (
                 <span className="hidden sm:inline-block px-1.5 py-0.2 text-[10px] bg-slate-800 text-slate-400 rounded">
                   Accelerated
+                </span>
+              ) : null}
+              {task.protocol === 'torrent' && task.peers !== undefined && (
+                <span className="text-[11px] text-cyan-300/80 font-mono">
+                  {task.peers} peers
                 </span>
               )}
             </div>
@@ -113,6 +122,9 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
               {isDownloading && (
                 <>
                   <span className="text-brand-400 font-semibold">{formatSpeed(task.speed)}</span>
+                  {task.uploadSpeed !== undefined && task.uploadSpeed > 0 && (
+                    <span className="text-emerald-400/90 text-[11px]">↑ {formatSpeed(task.uploadSpeed)}</span>
+                  )}
                   <span className="text-slate-600">•</span>
                   <span>ETA: {formatEta(task.eta)}</span>
                 </>
@@ -222,6 +234,33 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
             <span className="text-slate-500">Added on:</span>
             <span>{formatDate(task.createdAt)}</span>
           </div>
+
+          {task.infoHash && (
+            <div className="flex items-center justify-between font-mono text-[10px] pt-1">
+              <span className="text-slate-500">InfoHash:</span>
+              <span className="text-cyan-400 select-all">{task.infoHash}</span>
+            </div>
+          )}
+
+          {task.torrentFiles && task.torrentFiles.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-slate-850">
+              <span className="text-slate-400 font-medium block mb-1.5 text-[11px]">
+                Included Files ({task.torrentFiles.length}):
+              </span>
+              <div className="max-h-32 overflow-y-auto space-y-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800/80">
+                {task.torrentFiles.map((file, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] py-0.5">
+                    <span className="truncate text-slate-300 max-w-[280px]" title={file.name}>
+                      {file.name}
+                    </span>
+                    <span className="text-slate-500 font-mono text-[10px]">
+                      {formatBytes(file.length)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

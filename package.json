@@ -16,7 +16,9 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
-    "tailwind-merge": "^3.5.0"
+    "parse-torrent": "^11.0.24",
+    "tailwind-merge": "^3.5.0",
+    "webtorrent": "^3.0.21"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -49,7 +51,9 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     }

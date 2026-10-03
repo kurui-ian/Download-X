@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, clipboard, nativeTheme } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { DownloadManager } from './manager/DownloadManager';
 import { PersistenceStore } from './manager/store';
 import { inspectUrl } from './engine/inspector';
@@ -238,6 +239,64 @@ function setupIpc() {
 
   ipcMain.handle('clipboard:read', () => {
     return clipboard.readText();
+  });
+
+  ipcMain.handle('app:get-file-thumbnail', async (_e, filePath: string) => {
+    try {
+      if (!filePath) return null;
+      let targetFile = filePath;
+
+      if (!fs.existsSync(targetFile)) return null;
+
+      const stat = await fs.promises.stat(targetFile);
+      if (stat.isDirectory()) {
+        const entries = await fs.promises.readdir(targetFile);
+        const mediaFile = entries.find((f) => {
+          const ext = path.extname(f).toLowerCase();
+          return ['.mp4', '.mkv', '.avi', '.webm', '.jpg', '.jpeg', '.png', '.webp', '.mp3', '.gif'].includes(ext);
+        });
+        if (mediaFile) {
+          targetFile = path.join(targetFile, mediaFile);
+        } else {
+          return null;
+        }
+      }
+
+      // Try native Windows thumbnail extraction (video frame, cover art, image)
+      try {
+        if (typeof nativeImage.createThumbnailFromPath === 'function') {
+          const thumb = await nativeImage.createThumbnailFromPath(targetFile, { width: 160, height: 160 });
+          if (thumb && !thumb.isEmpty()) {
+            return thumb.toDataURL();
+          }
+        }
+      } catch {
+        // Fallback to direct read
+      }
+
+      // Direct read for standard image formats
+      const ext = path.extname(targetFile).toLowerCase();
+      if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.bmp', '.ico'].includes(ext)) {
+        const fileStat = await fs.promises.stat(targetFile);
+        if (fileStat.size < 15 * 1024 * 1024) {
+          const buf = await fs.promises.readFile(targetFile);
+          const mime = ext === '.svg' ? 'image/svg+xml' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+          return `data:${mime};base64,${buf.toString('base64')}`;
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('app:set-theme', (_e, theme: 'system' | 'light' | 'dark') => {
+    nativeTheme.themeSource = theme;
+    if (mainWindow) {
+      mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff');
+    }
+    return true;
   });
 }
 

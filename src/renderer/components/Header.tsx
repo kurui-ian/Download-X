@@ -1,5 +1,6 @@
 import React from 'react';
-import { Plus, Play, Pause, Trash2, Search } from 'lucide-react';
+import { Plus, Play, Pause, Trash2, Search, Sun, Moon, Laptop } from 'lucide-react';
+import { ThemeMode } from '../utils/theme';
 
 interface HeaderProps {
   onOpenAddModal: () => void;
@@ -8,6 +9,8 @@ interface HeaderProps {
   onClearCompleted: () => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  theme: ThemeMode;
+  onCycleTheme: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,57 +20,76 @@ export const Header: React.FC<HeaderProps> = ({
   onClearCompleted,
   searchQuery,
   onSearchChange,
+  theme,
+  onCycleTheme,
 }) => {
   return (
-    <header className="h-16 px-6 bg-surface-900/90 border-b border-slate-800 flex items-center justify-between gap-4 select-none">
-      {/* Search Bar */}
-      <div className="relative flex-1 max-w-md">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+    <header className="h-14 px-5 bg-white/80 dark:bg-black/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800/80 flex items-center justify-between gap-4 select-none transition-colors">
+      {/* Search Input */}
+      <div className="relative flex-1 max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Filter downloads by file name or URL..."
-          className="w-full bg-surface-950/80 border border-slate-800 focus:border-brand-500 rounded-xl pl-10 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 outline-none transition-all"
+          placeholder="Search by file name or URL..."
+          className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-lg pl-9 pr-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none transition-all font-sans"
         />
       </div>
 
-      {/* Global Action Toolbar */}
-      <div className="flex items-center gap-2">
+      {/* Global Actions Toolbar */}
+      <div className="flex items-center gap-1.5">
+        {/* Quick Theme Switcher */}
+        <button
+          onClick={onCycleTheme}
+          className="p-1.5 text-zinc-500 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
+          title={`Theme: ${theme.toUpperCase()} (Click to toggle)`}
+        >
+          {theme === 'light' ? (
+            <Sun className="w-4 h-4 text-zinc-800" />
+          ) : theme === 'dark' ? (
+            <Moon className="w-4 h-4 text-zinc-200" />
+          ) : (
+            <Laptop className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+          )}
+        </button>
+
+        <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-1" />
+
         <button
           onClick={onResumeAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-emerald-400 bg-surface-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-lg transition-all"
-          title="Resume all queued and paused downloads"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 rounded-lg transition-all"
+          title="Resume all downloads"
         >
-          <Play className="w-3.5 h-3.5" />
-          <span>Resume All</span>
+          <Play className="w-3 h-3" />
+          <span>Resume</span>
         </button>
 
         <button
           onClick={onPauseAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-amber-400 bg-surface-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-lg transition-all"
-          title="Pause all active downloads"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 rounded-lg transition-all"
+          title="Pause all downloads"
         >
-          <Pause className="w-3.5 h-3.5" />
-          <span>Pause All</span>
+          <Pause className="w-3 h-3" />
+          <span>Pause</span>
         </button>
 
         <button
           onClick={onClearCompleted}
-          className="p-2 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-lg transition-colors"
-          title="Clear Completed & Cancelled tasks"
+          className="p-1.5 text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
+          title="Clear Completed tasks"
         >
-          <Trash2 className="w-4 h-4" />
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
 
-        <div className="h-5 w-[1px] bg-slate-800 mx-1" />
+        <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-1" />
 
-        {/* Primary CTA */}
+        {/* High-Contrast Minimalist Primary CTA */}
         <button
           onClick={onOpenAddModal}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white font-semibold text-xs rounded-xl shadow-lg shadow-brand-600/25 transition-all transform active:scale-95"
+          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-black dark:bg-white text-white dark:text-black hover:opacity-90 font-medium text-xs rounded-lg shadow-sm transition-all transform active:scale-95"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-3.5 h-3.5" />
           <span>Add Download</span>
         </button>
       </div>

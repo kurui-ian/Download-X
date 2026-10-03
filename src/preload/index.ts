@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppSettings, DownloadTask, GlobalSpeedStats, UrlInspectionResult } from '../main/engine/types';
 
 export interface ElectronAPI {
@@ -29,6 +29,9 @@ export interface ElectronAPI {
   onTasksUpdated: (callback: (tasks: DownloadTask[]) => void) => () => void;
   onSpeedStats: (callback: (stats: GlobalSpeedStats) => void) => () => void;
   readClipboard: () => Promise<string>;
+  getFileThumbnail: (filePath: string) => Promise<string | null>;
+  getPathForFile: (file: File) => string;
+  setNativeTheme: (theme: 'system' | 'light' | 'dark') => Promise<boolean>;
 }
 
 const api: ElectronAPI = {
@@ -60,6 +63,18 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener('speed-stats', handler);
   },
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  getFileThumbnail: (filePath: string) => ipcRenderer.invoke('app:get-file-thumbnail', filePath),
+  getPathForFile: (file: File) => {
+    try {
+      if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        return webUtils.getPathForFile(file);
+      }
+    } catch {
+      // Fallback
+    }
+    return (file as any).path || '';
+  },
+  setNativeTheme: (theme: 'system' | 'light' | 'dark') => ipcRenderer.invoke('app:set-theme', theme),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

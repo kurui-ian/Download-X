@@ -27,6 +27,7 @@ interface AddDownloadModalProps {
   }) => void;
   defaultSaveDir: string;
   defaultConnections: number;
+  initialUrl?: string;
 }
 
 export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
@@ -35,6 +36,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   onAdd,
   defaultSaveDir,
   defaultConnections,
+  initialUrl,
 }) => {
   const [url, setUrl] = useState('');
   const [fileName, setFileName] = useState('');
@@ -55,8 +57,12 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       setDuplicateTask(null);
       setForceRedownload(false);
 
-      // Automatically read native clipboard
-      if (window.electronAPI?.readClipboard) {
+      if (initialUrl && initialUrl.trim()) {
+        const clean = initialUrl.trim();
+        setUrl(clean);
+        triggerInspect(clean);
+      } else if (window.electronAPI?.readClipboard) {
+        // Automatically read native clipboard if no initialUrl
         window.electronAPI.readClipboard().then((clip) => {
           if (clip) {
             const clean = clip.trim();
@@ -80,7 +86,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       setDuplicateTask(null);
       setForceRedownload(false);
     }
-  }, [isOpen, defaultSaveDir, defaultConnections]);
+  }, [isOpen, defaultSaveDir, defaultConnections, initialUrl]);
 
   const triggerInspect = async (targetUrl: string) => {
     const clean = targetUrl.trim();
@@ -113,7 +119,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
         setFileName(result.fileName);
       }
     } catch (err: any) {
-      setInspectError(err.message || 'Server does not support metadata inspection');
+      setInspectError(err.message || 'Unable to inspect metadata');
       setInspection(null);
     } finally {
       setIsInspecting(false);
@@ -158,6 +164,25 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     }
   };
 
+  const handleModalDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      const filePath = window.electronAPI?.getPathForFile ? window.electronAPI.getPathForFile(file) : ((file as any).path || '');
+      if (filePath) {
+        setUrl(filePath);
+        triggerInspect(filePath);
+        return;
+      }
+    }
+
+    const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text');
+    if (text && text.trim()) {
+      setUrl(text.trim());
+      triggerInspect(text.trim());
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUrl = url.trim();
@@ -187,34 +212,36 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div 
+      className="fixed inset-0 z-50 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 transition-colors"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleModalDrop}
+    >
       <div 
-        className="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden"
+        className="w-full max-w-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl overflow-hidden transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/80">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              isTorrent ? 'bg-cyan-500/20 border border-cyan-500/30 text-cyan-400' : 'bg-blue-500/20 border border-blue-500/30 text-blue-400'
-            }`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-sm">
               {isTorrent ? <Radio className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">
-                {isTorrent ? 'Add BitTorrent / Magnet Download' : 'Add Download Task'}
+              <h2 className="text-sm font-bold text-zinc-900 dark:text-white">
+                {isTorrent ? 'BitTorrent Download' : 'New Download'}
               </h2>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-zinc-500">
                 {isTorrent 
-                  ? 'High-speed peer-to-peer torrent transfer' 
-                  : 'Enter URL or Magnet to start multi-part accelerated download'}
+                  ? 'P2P swarm acceleration with pause & resume' 
+                  : 'Fast multi-threaded HTTP/HTTPS downloading'}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+            className="p-1.5 text-zinc-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -222,25 +249,25 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* URL Input with Actions */}
+          {/* URL Input with Quick Actions */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold text-slate-200">
-                Download URL / Magnet / .torrent Path
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                URL, Magnet link, or .torrent file
               </label>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
                 <button
                   type="button"
                   onClick={handleBrowseTorrentFile}
-                  className="flex items-center gap-1 text-[11px] font-medium text-cyan-400 hover:text-cyan-300 hover:underline"
+                  className="flex items-center gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-black dark:hover:text-white hover:underline"
                 >
                   <Radio className="w-3 h-3" />
-                  <span>Open .torrent</span>
+                  <span>Choose .torrent</span>
                 </button>
                 <button
                   type="button"
                   onClick={handlePasteFromClipboard}
-                  className="flex items-center gap-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 hover:underline"
+                  className="flex items-center gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-black dark:hover:text-white hover:underline"
                 >
                   <ClipboardPaste className="w-3 h-3" />
                   <span>Paste</span>
@@ -265,23 +292,23 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                     triggerInspect(url);
                   }
                 }}
-                placeholder="https://... or magnet:?xt=urn:btih:... or file.torrent"
-                className="w-full bg-slate-950 border border-slate-750 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 outline-none pr-24 font-mono"
+                placeholder="https://... or magnet:?xt=urn:btih:... or drag & drop .torrent"
+                className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-xl px-3.5 py-2.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none pr-24 font-mono transition-all"
               />
               <div className="absolute right-1.5 flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => triggerInspect(url)}
                   disabled={!url.trim() || isInspecting}
-                  className="px-2.5 py-1 text-[11px] font-medium bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors flex items-center gap-1 border border-slate-700"
+                  className="px-2.5 py-1 text-[11px] font-medium bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 disabled:opacity-40 text-zinc-900 dark:text-zinc-100 rounded-lg transition-colors flex items-center gap-1 border border-zinc-300 dark:border-zinc-700"
                 >
                   {isInspecting ? (
                     <>
-                      <Loader2 className="w-3 h-3 animate-spin text-blue-400" />
+                      <Loader2 className="w-3 h-3 animate-spin text-zinc-900 dark:text-zinc-100" />
                       <span>Checking...</span>
                     </>
                   ) : (
-                    <span>Check Info</span>
+                    <span>Inspect</span>
                   )}
                 </button>
               </div>
@@ -289,33 +316,26 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
             {/* Quick Test Samples */}
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
-              <span className="text-[10px] text-slate-500">Quick tests:</span>
+              <span className="text-[10px] text-zinc-400 font-mono">Samples:</span>
               <button
                 type="button"
                 onClick={() => setSampleUrl('https://proof.ovh.net/files/10Mb.dat')}
-                className="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
+                className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 transition-colors"
               >
-                10 MB HTTP
-              </button>
-              <button
-                type="button"
-                onClick={() => setSampleUrl('https://proof.ovh.net/files/100Mb.dat')}
-                className="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
-              >
-                100 MB HTTP
+                10MB HTTP
               </button>
               <button
                 type="button"
                 onClick={() => setSampleUrl('magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny')}
-                className="text-[10px] px-2 py-0.5 bg-cyan-950/80 hover:bg-cyan-900/80 text-cyan-300 hover:text-cyan-100 rounded border border-cyan-800/40 transition-colors flex items-center gap-1 font-medium"
+                className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 rounded border border-zinc-300 dark:border-zinc-700 transition-colors flex items-center gap-1"
               >
                 <Radio className="w-2.5 h-2.5" />
-                <span>Big Buck Bunny (Magnet)</span>
+                <span>Big Buck Bunny</span>
               </button>
               <button
                 type="button"
                 onClick={() => setSampleUrl('https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso.torrent')}
-                className="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded border border-slate-700 transition-colors"
+                className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 transition-colors"
               >
                 Ubuntu ISO (.torrent)
               </button>
@@ -324,14 +344,14 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
           {/* Duplicate Alert Card */}
           {duplicateTask && (
-            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200">
+            <div className="p-3.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100">
               <div className="flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-zinc-900 dark:text-zinc-100" />
                 <div className="flex-1 text-xs">
-                  <div className="font-semibold text-amber-300">Duplicate Download Detected</div>
-                  <div className="text-[11px] text-slate-300 mt-0.5">
-                    This link is already in your downloads as{' '}
-                    <span className="font-semibold text-white">{duplicateTask.fileName}</span>{' '}
+                  <div className="font-semibold">Duplicate Download Detected</div>
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    This file is already in your tasks as{' '}
+                    <span className="font-semibold text-zinc-900 dark:text-white">{duplicateTask.fileName}</span>{' '}
                     ({duplicateTask.status}).
                   </div>
                   <div className="flex items-center gap-2 mt-2">
@@ -343,9 +363,9 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                           window.electronAPI.openFile(duplicateTask.id);
                         }
                       }}
-                      className="px-2.5 py-1 text-[11px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-lg border border-amber-500/30 font-medium transition-colors"
+                      className="px-2.5 py-1 text-[11px] bg-black dark:bg-white text-white dark:text-black rounded-lg font-medium transition-opacity hover:opacity-90"
                     >
-                      {duplicateTask.status === 'completed' ? 'Open Existing File' : 'View in List'}
+                      {duplicateTask.status === 'completed' ? 'Open Existing File' : 'View Task'}
                     </button>
                     <button
                       type="button"
@@ -353,9 +373,9 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                         setForceRedownload(true);
                         setDuplicateTask(null);
                       }}
-                      className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-colors"
+                      className="px-2.5 py-1 text-[11px] bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 rounded-lg transition-colors"
                     >
-                      Download Anyway
+                      Download Again
                     </button>
                   </div>
                 </div>
@@ -365,18 +385,18 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
           {/* Inspection Metadata Card */}
           {inspection && (
-            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs">
+            <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-xs">
               <div className="space-y-0.5">
-                <div className="font-semibold text-slate-200">
-                  Size: {inspection.fileSize > 0 ? formatBytes(inspection.fileSize) : 'Resolving swarm metadata...'}
+                <div className="font-mono font-semibold text-zinc-900 dark:text-zinc-100">
+                  Size: {inspection.fileSize > 0 ? formatBytes(inspection.fileSize) : 'Swarm metadata loading...'}
                 </div>
-                <div className="text-[11px] text-slate-400">
-                  Type:{' '}
-                  <span className={`capitalize font-semibold ${isTorrent ? 'text-cyan-400' : 'text-brand-400'}`}>
+                <div className="text-[11px] text-zinc-500 font-mono">
+                  Format:{' '}
+                  <span className="font-semibold text-zinc-800 dark:text-zinc-200 uppercase">
                     {isTorrent ? 'BitTorrent' : inspection.category}
                   </span>
                   {inspection.torrentFiles && inspection.torrentFiles.length > 0 && (
-                    <span className="text-slate-500 ml-1.5 font-normal">
+                    <span className="text-zinc-400 ml-1.5 font-normal">
                       ({inspection.torrentFiles.length} files)
                     </span>
                   )}
@@ -385,16 +405,16 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
               <div>
                 {isTorrent ? (
-                  <span className="flex items-center gap-1 text-[11px] font-medium text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2.5 py-1 rounded-full">
-                    <Radio className="w-3.5 h-3.5" /> P2P Swarm
+                  <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
+                    <Radio className="w-3 h-3" /> P2P Swarm
                   </span>
                 ) : inspection.supportsRanges ? (
-                  <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Range Supported (Fast)
+                  <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
+                    <CheckCircle2 className="w-3 h-3" /> Multi-Thread Fast
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1 text-[11px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
-                    <AlertCircle className="w-3.5 h-3.5" /> Single Stream
+                  <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                    <AlertCircle className="w-3 h-3" /> Single Stream
                   </span>
                 )}
               </div>
@@ -402,42 +422,42 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
           )}
 
           {inspectError && (
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-400" />
-              <span>{inspectError} (Download will still attempt to connect)</span>
+            <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-xs text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{inspectError} (Download will still proceed)</span>
             </div>
           )}
 
           {/* Save Filename */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              File / Folder Name
+            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
+              File Name
             </label>
             <input
               type="text"
               value={fileName}
               onChange={(e) => setFileName(e.target.value)}
-              placeholder="Auto-detected from metadata"
-              className="w-full bg-slate-950 border border-slate-750 focus:border-blue-500 rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 outline-none"
+              placeholder="Auto-detected from file"
+              className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-xl px-3.5 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none transition-all font-mono"
             />
           </div>
 
           {/* Save Directory */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Save To
+            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
+              Save Location
             </label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 readOnly
                 value={saveDir}
-                className="flex-1 bg-slate-950 border border-slate-750 rounded-xl px-3.5 py-2 text-xs text-slate-300 outline-none truncate"
+                className="flex-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-700 dark:text-zinc-300 outline-none truncate font-mono"
               />
               <button
                 type="button"
                 onClick={handleBrowseDir}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-colors border border-slate-700"
+                className="px-3 py-2 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-colors border border-zinc-300 dark:border-zinc-700"
               >
                 <Folder className="w-3.5 h-3.5" />
                 <span>Browse</span>
@@ -448,12 +468,12 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
           {/* Parallel Connections Slider (HTTP only) */}
           {!isTorrent && (
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-300 mb-1.5">
+              <div className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                 <span className="flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Parallel Connections</span>
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Parallel Streams</span>
                 </span>
-                <span className="font-mono text-blue-400 font-bold">{threadCount} threads</span>
+                <span className="font-mono font-bold text-zinc-900 dark:text-white">{threadCount} streams</span>
               </div>
               <input
                 type="range"
@@ -461,7 +481,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                 max="16"
                 value={threadCount}
                 onChange={(e) => setThreadCount(Number(e.target.value))}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-black dark:accent-white cursor-pointer"
               />
             </div>
           )}
@@ -473,29 +493,25 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
               id="autoStart"
               checked={autoStart}
               onChange={(e) => setAutoStart(e.target.checked)}
-              className="accent-blue-500 rounded cursor-pointer w-4 h-4"
+              className="accent-black dark:accent-white rounded cursor-pointer w-4 h-4"
             />
-            <label htmlFor="autoStart" className="text-xs text-slate-300 cursor-pointer select-none">
+            <label htmlFor="autoStart" className="text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer select-none">
               Start downloading immediately
             </label>
           </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs text-slate-400 hover:text-slate-200 rounded-xl transition-colors"
+              className="px-4 py-2 text-xs text-zinc-500 hover:text-black dark:hover:text-white rounded-xl transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className={`px-5 py-2.5 font-semibold text-xs rounded-xl shadow-lg transition-all transform active:scale-95 text-white ${
-                isTorrent
-                  ? 'bg-cyan-600 hover:bg-cyan-500 shadow-cyan-600/30'
-                  : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/30'
-              }`}
+              className="px-5 py-2.5 bg-black dark:bg-white text-white dark:text-black hover:opacity-90 font-medium text-xs rounded-xl shadow-sm transition-all transform active:scale-95"
             >
               {autoStart ? 'Download Now' : 'Add to Queue'}
             </button>

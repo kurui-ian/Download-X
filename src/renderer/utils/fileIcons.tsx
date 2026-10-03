@@ -17,55 +17,26 @@ export function getCategoryBadge(category: TaskCategory): {
   textColor: string;
   borderColor: string;
 } {
+  const common = {
+    bgColor: 'bg-zinc-100 dark:bg-zinc-900',
+    textColor: 'text-zinc-900 dark:text-zinc-100',
+    borderColor: 'border-zinc-200 dark:border-zinc-800',
+  };
+
   switch (category) {
     case 'video':
-      return {
-        icon: FileVideo,
-        bgColor: 'bg-rose-500/10',
-        textColor: 'text-rose-400',
-        borderColor: 'border-rose-500/20',
-      };
+      return { ...common, icon: FileVideo };
     case 'audio':
-      return {
-        icon: FileAudio,
-        bgColor: 'bg-amber-500/10',
-        textColor: 'text-amber-400',
-        borderColor: 'border-amber-500/20',
-      };
+      return { ...common, icon: FileAudio };
     case 'document':
-      return {
-        icon: FileText,
-        bgColor: 'bg-emerald-500/10',
-        textColor: 'text-emerald-400',
-        borderColor: 'border-emerald-500/20',
-      };
+      return { ...common, icon: FileText };
     case 'archive':
-      return {
-        icon: FileArchive,
-        bgColor: 'bg-purple-500/10',
-        textColor: 'text-purple-400',
-        borderColor: 'border-purple-500/20',
-      };
+      return { ...common, icon: FileArchive };
     case 'program':
-      return {
-        icon: FileCode,
-        bgColor: 'bg-blue-500/10',
-        textColor: 'text-blue-400',
-        borderColor: 'border-blue-500/20',
-      };
+      return { ...common, icon: FileCode };
     case 'torrent':
-      return {
-        icon: Radio,
-        bgColor: 'bg-cyan-500/10',
-        textColor: 'text-cyan-400',
-        borderColor: 'border-cyan-500/20',
-      };
+      return { ...common, icon: Radio };
     default:
-      return {
-        icon: FileQuestion,
-        bgColor: 'bg-slate-500/10',
-        textColor: 'text-slate-400',
-        borderColor: 'border-slate-500/20',
-      };
+      return { ...common, icon: FileQuestion };
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Play, 
   Pause, 
@@ -35,6 +35,8 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
 }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+
   const categoryInfo = getCategoryBadge(task.category);
   const CategoryIcon = categoryInfo.icon;
 
@@ -44,47 +46,94 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
   const isError = task.status === 'error';
   const isQueued = task.status === 'queued';
 
+  // Automatically fetch file thumbnail / cover photo once completed
+  useEffect(() => {
+    let isMounted = true;
+    if (isCompleted && task.savePath && window.electronAPI?.getFileThumbnail) {
+      window.electronAPI.getFileThumbnail(task.savePath).then((thumb) => {
+        if (isMounted && thumb) {
+          setThumbnailUrl(thumb);
+        }
+      }).catch(() => {});
+    } else {
+      setThumbnailUrl(null);
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isCompleted, task.savePath]);
+
   return (
-    <div className="group relative bg-surface-900/60 hover:bg-surface-900/90 border border-slate-800/80 hover:border-slate-700/80 rounded-xl p-4 transition-all duration-200 shadow-sm">
-      <div className="flex items-start gap-4">
-        {/* Category Icon */}
-        <div
-          className={`flex-shrink-0 w-11 h-11 rounded-lg border ${categoryInfo.borderColor} ${categoryInfo.bgColor} flex items-center justify-center`}
-        >
-          <CategoryIcon className={`w-5 h-5 ${categoryInfo.textColor}`} />
-        </div>
+    <div className="group relative bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700/80 rounded-xl p-4 transition-all duration-200 shadow-sm">
+      <div className="flex items-start gap-3.5">
+        {/* Cover Photo / File Thumbnail or Monochrome Category Icon */}
+        {thumbnailUrl ? (
+          <div
+            onClick={() => isCompleted && onOpenFile(task.id)}
+            className="relative group/thumb flex-shrink-0 w-11 h-11 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 cursor-pointer shadow-sm transition-transform duration-200 hover:scale-105 active:scale-95"
+            title="Click to open file"
+          >
+            <img
+              src={thumbnailUrl}
+              alt={task.fileName}
+              className="w-full h-full object-cover transition-transform duration-300 group-hover/thumb:scale-110"
+            />
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center transition-opacity">
+              <ExternalLink className="w-3.5 h-3.5 text-white" />
+            </div>
+          </div>
+        ) : (
+          <div
+            className="flex-shrink-0 w-11 h-11 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center transition-colors"
+          >
+            <CategoryIcon className="w-5 h-5 text-zinc-800 dark:text-zinc-200" />
+          </div>
+        )}
 
         {/* Content Body */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2 mb-1">
             <h3
-              className="text-sm font-semibold text-slate-100 truncate cursor-pointer hover:text-brand-400"
+              className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate cursor-pointer hover:underline"
               title={task.fileName}
               onClick={() => isCompleted && onOpenFile(task.id)}
             >
               {task.fileName}
             </h3>
 
-            {/* Status Badge */}
-            <span
-              className={`text-[11px] font-medium px-2 py-0.5 rounded-full capitalize ${
-                isCompleted
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                  : isDownloading
-                  ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20 animate-pulse'
-                  : isPaused
-                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                  : isQueued
-                  ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                  : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-              }`}
-            >
-              {task.status}
+            {/* Minimalist Status Badge */}
+            <span className="flex-shrink-0">
+              {isCompleted ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 font-medium">
+                  <FileCheck className="w-3 h-3" /> Done
+                </span>
+              ) : isDownloading ? (
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-zinc-900 dark:bg-zinc-100 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-zinc-900 dark:bg-zinc-100"></span>
+                  </span>
+                  Downloading
+                </span>
+              ) : isPaused ? (
+                <span className="inline-flex items-center text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400">
+                  Paused
+                </span>
+              ) : isQueued ? (
+                <span className="inline-flex items-center text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400">
+                  Queued
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-400 dark:border-zinc-600 text-zinc-800 dark:text-zinc-200">
+                  <AlertCircle className="w-3 h-3" /> Error
+                </span>
+              )}
             </span>
           </div>
 
           {/* Segmented Progress Bar */}
-          <div className="my-2.5">
+          <div className="my-2">
             <SegmentedBar
               chunks={task.chunks}
               overallProgress={task.progress}
@@ -93,53 +142,55 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
           </div>
 
           {/* Metrics & Info */}
-          <div className="flex flex-wrap items-center justify-between text-xs text-slate-400 gap-y-1">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 gap-y-1 font-mono">
+            <div className="flex items-center gap-2">
               <span>
                 {formatBytes(task.downloadedBytes)} / {task.fileSize > 0 ? formatBytes(task.fileSize) : 'Unknown size'}
               </span>
-              <span className="text-slate-600">•</span>
-              <span className="font-mono text-slate-300">
+              <span className="text-zinc-300 dark:text-zinc-700">•</span>
+              <span className="text-zinc-800 dark:text-zinc-200 font-semibold">
                 {task.progress > 0 ? `${task.progress.toFixed(1)}%` : '0%'}
               </span>
               {task.protocol === 'torrent' ? (
-                <span className="inline-block px-1.5 py-0.2 text-[10px] bg-cyan-950/80 text-cyan-400 border border-cyan-800/40 rounded font-medium">
-                  BitTorrent
+                <span className="inline-block px-1.5 py-0.2 text-[9px] bg-zinc-100 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded font-medium">
+                  Torrent
                 </span>
               ) : task.supportsRanges ? (
-                <span className="hidden sm:inline-block px-1.5 py-0.2 text-[10px] bg-slate-800 text-slate-400 rounded">
-                  Accelerated
+                <span className="hidden sm:inline-block px-1.5 py-0.2 text-[9px] bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800 rounded">
+                  Multi-thread
                 </span>
               ) : null}
               {task.protocol === 'torrent' && task.peers !== undefined && (
-                <span className="text-[11px] text-cyan-300/80 font-mono">
+                <span className="text-[10px] text-zinc-600 dark:text-zinc-400">
                   {task.peers} peers
                 </span>
               )}
             </div>
 
-            <div className="flex items-center gap-3 font-mono">
+            <div className="flex items-center gap-2.5">
               {isDownloading && (
                 <>
-                  <span className="text-brand-400 font-semibold">{formatSpeed(task.speed)}</span>
+                  <div className="flex items-center gap-1 font-semibold text-zinc-900 dark:text-zinc-100">
+                    <span className="inline-block animate-download-bounce">↓</span>
+                    <span>{formatSpeed(task.speed)}</span>
+                  </div>
                   {task.uploadSpeed !== undefined && task.uploadSpeed > 0 && (
-                    <span className="text-emerald-400/90 text-[11px]">↑ {formatSpeed(task.uploadSpeed)}</span>
+                    <span className="text-zinc-500 text-[10px]">↑ {formatSpeed(task.uploadSpeed)}</span>
                   )}
-                  <span className="text-slate-600">•</span>
+                  <span className="text-zinc-300 dark:text-zinc-700">•</span>
                   <span>ETA: {formatEta(task.eta)}</span>
                 </>
               )}
               {isCompleted && (
-                <span className="text-emerald-400 flex items-center gap-1 font-sans">
-                  <FileCheck className="w-3.5 h-3.5" /> Complete
+                <span className="text-zinc-700 dark:text-zinc-300 flex items-center gap-1 font-sans">
+                  Ready to open
                 </span>
               )}
-              {isPaused && <span className="text-amber-400 font-sans">Paused</span>}
-              {isQueued && <span className="text-purple-400 font-sans">Queued</span>}
+              {isPaused && <span>Paused</span>}
+              {isQueued && <span>In Queue</span>}
               {isError && (
-                <span className="text-rose-400 flex items-center gap-1 font-sans" title={task.errorMessage}>
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="truncate max-w-[200px]">{task.errorMessage || 'Download error'}</span>
+                <span className="text-zinc-700 dark:text-zinc-300 truncate max-w-[180px]" title={task.errorMessage}>
+                  {task.errorMessage || 'Failed'}
                 </span>
               )}
             </div>
@@ -147,11 +198,11 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-0.5 flex-shrink-0">
           {isError ? (
             <button
               onClick={() => onResume(task.id)}
-              className="p-2 text-rose-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1"
+              className="p-1.5 text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
               title="Retry Download"
             >
               <RotateCcw className="w-4 h-4" />
@@ -159,7 +210,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
           ) : isDownloading ? (
             <button
               onClick={() => onPause(task.id)}
-              className="p-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800/80 rounded-lg transition-colors"
+              className="p-1.5 text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
               title="Pause Download"
             >
               <Pause className="w-4 h-4" />
@@ -168,10 +219,10 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
             <button
               onClick={() => onResume(task.id)}
               disabled={isCompleted}
-              className={`p-2 rounded-lg transition-colors ${
+              className={`p-1.5 rounded-lg transition-colors ${
                 isCompleted
-                  ? 'text-slate-600 cursor-not-allowed'
-                  : 'text-slate-400 hover:text-emerald-400 hover:bg-slate-800/80'
+                  ? 'text-zinc-300 dark:text-zinc-700 cursor-not-allowed'
+                  : 'text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900'
               }`}
               title="Resume Download"
             >
@@ -182,7 +233,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
           {isCompleted && (
             <button
               onClick={() => onOpenFile(task.id)}
-              className="p-2 text-slate-400 hover:text-brand-400 hover:bg-slate-800/80 rounded-lg transition-colors"
+              className="p-1.5 text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
               title="Open File"
             >
               <ExternalLink className="w-4 h-4" />
@@ -191,7 +242,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
 
           <button
             onClick={() => onOpenFolder(task.id)}
-            className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition-colors"
+            className="p-1.5 text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
             title="Show in Folder"
           >
             <FolderOpen className="w-4 h-4" />
@@ -199,7 +250,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
 
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="p-2 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-lg transition-colors"
+            className="p-1.5 text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
             title="Delete Task"
           >
             <Trash2 className="w-4 h-4" />
@@ -207,7 +258,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
 
           <button
             onClick={() => setShowDetails(!showDetails)}
-            className="p-2 text-slate-500 hover:text-slate-300 rounded-lg"
+            className="p-1.5 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 rounded-lg"
             title="Toggle Details"
           >
             {showDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -217,43 +268,43 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
 
       {/* Expanded Details Section */}
       {showDetails && (
-        <div className="mt-3 pt-3 border-t border-slate-800/80 text-xs text-slate-400 flex flex-col gap-1.5">
+        <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-slate-500">Source URL:</span>
-            <span className="truncate max-w-md font-mono text-[11px] text-slate-300" title={task.url}>
+            <span className="text-zinc-400 dark:text-zinc-500">Source:</span>
+            <span className="truncate max-w-md font-mono text-[11px] text-zinc-800 dark:text-zinc-200" title={task.url}>
               {task.url}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-slate-500">Saved to:</span>
-            <span className="truncate max-w-md font-mono text-[11px] text-slate-300" title={task.savePath}>
+            <span className="text-zinc-400 dark:text-zinc-500">Location:</span>
+            <span className="truncate max-w-md font-mono text-[11px] text-zinc-800 dark:text-zinc-200" title={task.savePath}>
               {task.savePath}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-slate-500">Added on:</span>
+            <span className="text-zinc-400 dark:text-zinc-500">Added:</span>
             <span>{formatDate(task.createdAt)}</span>
           </div>
 
           {task.infoHash && (
             <div className="flex items-center justify-between font-mono text-[10px] pt-1">
-              <span className="text-slate-500">InfoHash:</span>
-              <span className="text-cyan-400 select-all">{task.infoHash}</span>
+              <span className="text-zinc-400 dark:text-zinc-500">InfoHash:</span>
+              <span className="text-zinc-800 dark:text-zinc-200 select-all">{task.infoHash}</span>
             </div>
           )}
 
           {task.torrentFiles && task.torrentFiles.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-slate-850">
-              <span className="text-slate-400 font-medium block mb-1.5 text-[11px]">
+            <div className="mt-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
+              <span className="text-zinc-700 dark:text-zinc-300 font-medium block mb-1 text-[11px]">
                 Included Files ({task.torrentFiles.length}):
               </span>
-              <div className="max-h-32 overflow-y-auto space-y-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800/80">
+              <div className="max-h-32 overflow-y-auto space-y-1 bg-zinc-50 dark:bg-zinc-900/60 p-2 rounded-lg border border-zinc-200 dark:border-zinc-800">
                 {task.torrentFiles.map((file, idx) => (
                   <div key={idx} className="flex items-center justify-between text-[11px] py-0.5">
-                    <span className="truncate text-slate-300 max-w-[280px]" title={file.name}>
+                    <span className="truncate text-zinc-800 dark:text-zinc-200 max-w-[280px]" title={file.name}>
                       {file.name}
                     </span>
-                    <span className="text-slate-500 font-mono text-[10px]">
+                    <span className="text-zinc-500 font-mono text-[10px]">
                       {formatBytes(file.length)}
                     </span>
                   </div>
@@ -266,9 +317,9 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
 
       {/* Delete Confirmation Modal Overlay */}
       {showDeleteConfirm && (
-        <div className="absolute inset-0 bg-surface-950/95 backdrop-blur-sm rounded-xl p-4 flex flex-col justify-center items-center z-10 animate-fade-in">
-          <p className="text-sm font-medium text-slate-200 mb-3 text-center">
-            Remove <span className="font-semibold text-white">"{task.fileName}"</span>?
+        <div className="absolute inset-0 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-sm rounded-xl p-4 flex flex-col justify-center items-center z-10">
+          <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 mb-3 text-center">
+            Remove <span className="font-semibold">"{task.fileName}"</span>?
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -276,7 +327,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
                 setShowDeleteConfirm(false);
                 onDelete(task.id, false);
               }}
-              className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors"
+              className="px-3 py-1.5 text-xs bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 rounded-lg transition-colors"
             >
               Remove from List
             </button>
@@ -285,13 +336,13 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
                 setShowDeleteConfirm(false);
                 onDelete(task.id, true);
               }}
-              className="px-3 py-1.5 text-xs bg-rose-600/90 hover:bg-rose-600 text-white rounded-lg transition-colors"
+              className="px-3 py-1.5 text-xs bg-black dark:bg-white text-white dark:text-black font-medium rounded-lg transition-colors hover:opacity-90"
             >
               Delete File & Task
             </button>
             <button
               onClick={() => setShowDeleteConfirm(false)}
-              className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+              className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
             >
               Cancel
             </button>

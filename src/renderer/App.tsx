@@ -11,8 +11,12 @@ import { Header } from './components/Header';
 import { DownloadList } from './components/DownloadList';
 import { AddDownloadModal } from './components/AddDownloadModal';
 import { SettingsModal } from './components/SettingsModal';
+import { useTheme } from './utils/theme';
+import { ArrowDownToLine } from 'lucide-react';
 
 export const App: React.FC = () => {
+  const { theme, setTheme, cycleTheme } = useTheme();
+
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [speedStats, setSpeedStats] = useState<GlobalSpeedStats>({
     totalSpeed: 0,
@@ -36,7 +40,9 @@ export const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [addModalInitialUrl, setAddModalInitialUrl] = useState<string | undefined>(undefined);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   // Initial load
   useEffect(() => {
@@ -59,11 +65,81 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // Drag and Drop Handling (for .torrent files, links, magnets)
+  useEffect(() => {
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+      setIsDraggingOver(true);
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (
+        !e.relatedTarget || 
+        e.clientY <= 0 || 
+        e.clientX <= 0 || 
+        e.clientX >= window.innerWidth || 
+        e.clientY >= window.innerHeight
+      ) {
+        setIsDraggingOver(false);
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDraggingOver(false);
+
+      // 1. Check if files were dropped (.torrent file)
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        let filePath = '';
+        if (window.electronAPI?.getPathForFile) {
+          filePath = window.electronAPI.getPathForFile(file);
+        }
+        if (!filePath && (file as any).path) {
+          filePath = (file as any).path;
+        }
+
+        if (filePath) {
+          setAddModalInitialUrl(filePath);
+          setIsAddModalOpen(true);
+          return;
+        }
+      }
+
+      // 2. Check if URL, text, or Magnet link was dropped
+      if (e.dataTransfer) {
+        const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text');
+        if (text && text.trim()) {
+          setAddModalInitialUrl(text.trim());
+          setIsAddModalOpen(true);
+        }
+      }
+    };
+
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault();
+        setAddModalInitialUrl(undefined);
         setIsAddModalOpen(true);
       }
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
@@ -123,7 +199,7 @@ export const App: React.FC = () => {
     }
   };
 
-  // Actions
+  // Task Actions
   const handlePause = async (id: string) => {
     await window.electronAPI.pauseDownload(id);
   };
@@ -173,7 +249,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-surface-950 font-sans">
+    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans transition-colors relative">
       {/* Left Sidebar */}
       <Sidebar
         currentStatus={statusFilter}
@@ -186,14 +262,19 @@ export const App: React.FC = () => {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden bg-surface-950">
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-black transition-colors">
         <Header
-          onOpenAddModal={() => setIsAddModalOpen(true)}
+          onOpenAddModal={() => {
+            setAddModalInitialUrl(undefined);
+            setIsAddModalOpen(true);
+          }}
           onPauseAll={handlePauseAll}
           onResumeAll={handleResumeAll}
           onClearCompleted={handleClearCompleted}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          theme={theme}
+          onCycleTheme={cycleTheme}
         />
 
         <DownloadList
@@ -203,7 +284,10 @@ export const App: React.FC = () => {
           onDelete={handleDelete}
           onOpenFile={handleOpenFile}
           onOpenFolder={handleOpenFolder}
-          onOpenAddModal={() => setIsAddModalOpen(true)}
+          onOpenAddModal={() => {
+            setAddModalInitialUrl(undefined);
+            setIsAddModalOpen(true);
+          }}
           onQuickTestDownload={(testUrl) => handleAddDownload({ url: testUrl, autoStart: true })}
         />
       </main>
@@ -211,10 +295,14 @@ export const App: React.FC = () => {
       {/* Add Download Modal */}
       <AddDownloadModal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setAddModalInitialUrl(undefined);
+        }}
         onAdd={handleAddDownload}
         defaultSaveDir={settings.downloadDir}
         defaultConnections={settings.defaultConnections}
+        initialUrl={addModalInitialUrl}
       />
 
       {/* Preferences & Settings Modal */}
@@ -223,8 +311,30 @@ export const App: React.FC = () => {
         onClose={() => setIsSettingsModalOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+        currentTheme={theme}
+        onThemeChange={setTheme}
       />
+
+      {/* Fun Minimalist Drag and Drop Overlay */}
+      {isDraggingOver && (
+        <div className="fixed inset-0 z-[100] bg-white/85 dark:bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-8 pointer-events-none transition-all">
+          <div className="border-2 border-dashed border-black dark:border-white rounded-3xl w-full max-w-md h-64 flex flex-col items-center justify-center gap-3.5 bg-zinc-50/70 dark:bg-zinc-950/70 shadow-2xl animate-drop-pulse">
+            <div className="w-14 h-14 rounded-2xl bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-lg">
+              <ArrowDownToLine className="w-7 h-7 animate-download-bounce" />
+            </div>
+            <div className="text-center">
+              <h2 className="text-base font-bold text-zinc-900 dark:text-white mb-0.5">
+                Drop to Download
+              </h2>
+              <p className="text-xs text-zinc-500 font-mono">
+                Release .torrent file or download link here
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
 export default App;

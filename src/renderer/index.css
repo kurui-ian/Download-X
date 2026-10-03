@@ -8,10 +8,9 @@
   }
   
   body {
-    @apply bg-slate-950 text-slate-100;
     user-select: none;
     -webkit-user-select: none;
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Inter', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, sans-serif;
   }
 
   input, textarea, [contenteditable="true"] {
@@ -21,21 +20,72 @@
   }
 }
 
-/* Custom sleek scrollbar */
+/* Minimalist Monochrome Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.6);
+  background: rgba(0, 0, 0, 0.15);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.8);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Fun Minimalist Micro-Animations */
+@keyframes shimmer-flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-shimmer-flow {
+  animation: shimmer-flow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes download-bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(2px);
+  }
+}
+
+.animate-download-bounce {
+  animation: download-bounce 1s ease-in-out infinite;
+}
+
+@keyframes drop-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+}
+
+.animate-drop-pulse {
+  animation: drop-pulse 1.8s ease-in-out infinite;
 }

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Production & Build outputs
+dist/
+dist-electron/
+release/
+staging/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & Editor
+.env
+.env.local
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS Files
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
+
+# Temporary Downloads
+downloads/

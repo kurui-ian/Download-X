@@ -40,14 +40,17 @@
   "build": {
     "appId": "com.dlx.downloadmanager",
     "productName": "DLX",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "native-host/**/*"
     ],
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "portable",

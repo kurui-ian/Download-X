@@ -24,6 +24,15 @@ export interface AddDownloadParams {
   threadCount?: number;
   autoStart?: boolean;
   forceRedownload?: boolean;
+  mimeType?: string;
+  fileSize?: number;
+  referrer?: string;
+  source?: string;
+  sourcePageUrl?: string;
+  sourcePageTitle?: string;
+  quality?: string;
+  mediaType?: 'video' | 'audio' | 'image' | 'file' | 'torrent';
+  secondaryAudioUrl?: string;
 }
 
 export class DownloadManager {
@@ -44,7 +53,7 @@ export class DownloadManager {
         t.protocol = 'torrent';
       }
       if (!t.category || t.category === 'other' || t.category === 'all') {
-        t.category = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, '', t.finalUrl || t.url);
+        t.category = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, t.mimeType || '', t.finalUrl || t.url);
       }
       this.tasks.set(t.id, t);
     }
@@ -60,7 +69,7 @@ export class DownloadManager {
             try {
               const ytTitle = await fetchYouTubeTitle(ytId);
               if (ytTitle) {
-                let newName = ensureFileExtension(ytTitle, '', t.finalUrl || t.url);
+                let newName = ensureFileExtension(ytTitle, t.mimeType || '', t.finalUrl || t.url);
                 if (!path.extname(newName) && existingExt) {
                   newName = `${newName}${existingExt}`;
                 }
@@ -73,13 +82,13 @@ export class DownloadManager {
                 }
                 t.fileName = newName;
                 t.savePath = newPath;
-                t.category = categorizeFileName(newName, '', t.finalUrl || t.url);
+                t.category = categorizeFileName(newName, t.mimeType || '', t.finalUrl || t.url);
                 changed = true;
               }
             } catch {}
           }
         }
-        const expectedCat = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, '', t.finalUrl || t.url);
+        const expectedCat = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, t.mimeType || '', t.finalUrl || t.url);
         if (t.category !== expectedCat && t.category === 'other') {
           t.category = expectedCat;
           changed = true;
@@ -94,6 +103,10 @@ export class DownloadManager {
 
   public setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window;
+  }
+
+  public getMainWindow(): BrowserWindow | null {
+    return this.mainWindow;
   }
 
   public applySpeedLimit(bytesPerSec: number): void {
@@ -114,6 +127,10 @@ export class DownloadManager {
 
   public getTasks(): DownloadTask[] {
     return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  public getTaskById(id: string): DownloadTask | undefined {
+    return this.tasks.get(id);
   }
 
   public findDuplicate(rawUrl: string): DownloadTask | null {
@@ -172,21 +189,27 @@ export class DownloadManager {
       }
     }
 
+    if (!isTorrent && params.mimeType) {
+      initialFileName = ensureFileExtension(initialFileName, params.mimeType, cleanUrl);
+    }
+
     // Check YouTube video title fallback if name is still numeric or generic
     if (!isTorrent) {
-      const ytId = extractYouTubeVideoId(cleanUrl);
+      const ytId = extractYouTubeVideoId(cleanUrl) || (params.sourcePageUrl ? extractYouTubeVideoId(params.sourcePageUrl) : null);
       if (ytId && isNumericOrHashOnly(initialFileName)) {
         try {
           const ytTitle = await fetchYouTubeTitle(ytId);
           if (ytTitle) {
-            initialFileName = ensureFileExtension(ytTitle, '', cleanUrl);
+            initialFileName = ensureFileExtension(ytTitle, params.mimeType || '', cleanUrl);
           }
         } catch {}
+      } else if (params.sourcePageTitle && isNumericOrHashOnly(initialFileName)) {
+        initialFileName = ensureFileExtension(sanitizeFileName(params.sourcePageTitle), params.mimeType || '', cleanUrl);
       }
     }
 
     if (!initialFileName) {
-      initialFileName = `download_${Date.now()}`;
+      initialFileName = ensureFileExtension(`download_${Date.now()}`, params.mimeType || '', cleanUrl);
     }
 
     let finalPath = path.join(saveDir, initialFileName);
@@ -200,7 +223,9 @@ export class DownloadManager {
 
     const taskId = (Date.now().toString(36) + Math.random().toString(36).substring(2, 6)).toLowerCase();
     const threadCount = params.threadCount || settings.defaultConnections || 8;
-    const initialCategory: TaskCategory = isTorrent ? 'torrent' : categorizeFileName(path.basename(finalPath), '', cleanUrl);
+    const initialCategory: TaskCategory = isTorrent
+      ? 'torrent'
+      : categorizeFileName(path.basename(finalPath), params.mimeType || '', cleanUrl);
 
     const task: DownloadTask = {
       id: taskId,
@@ -208,18 +233,26 @@ export class DownloadManager {
       finalUrl: cleanUrl,
       fileName: path.basename(finalPath),
       savePath: finalPath,
-      fileSize: 0,
+      fileSize: params.fileSize && params.fileSize > 0 ? params.fileSize : 0,
       downloadedBytes: 0,
       status: params.autoStart !== false ? 'connecting' : 'paused',
       category: initialCategory,
       supportsRanges: isTorrent ? true : false,
-      threadCount: isTorrent ? 1 : 1,
+      threadCount: isTorrent ? 1 : threadCount,
       chunks: [],
       speed: 0,
       eta: 0,
       progress: 0,
       createdAt: Date.now(),
       protocol: isTorrent ? 'torrent' : 'http',
+      source: params.source,
+      sourcePageUrl: params.sourcePageUrl,
+      sourcePageTitle: params.sourcePageTitle,
+      referrer: params.referrer || params.sourcePageUrl,
+      quality: params.quality,
+      mimeType: params.mimeType,
+      mediaType: params.mediaType,
+      secondaryAudioUrl: params.secondaryAudioUrl,
     };
 
     // Store and immediately show task in UI!
@@ -227,10 +260,23 @@ export class DownloadManager {
     this.scheduleSave();
     this.broadcastTasks();
 
+    const isHlsUrl = cleanUrl.toLowerCase().includes('.m3u8') || cleanUrl.includes('__DLX_SEG_');
+    if (isHlsUrl && task.fileSize > 0) {
+      if (task.status !== 'paused' && task.status !== 'cancelled') {
+        task.status = params.autoStart !== false ? 'queued' : 'paused';
+      }
+      this.scheduleSave();
+      this.broadcastTasks();
+      if (task.status === 'queued' && params.autoStart !== false) {
+        this.processQueue();
+      }
+      return task;
+    }
+
     // Asynchronously probe and queue
     (async () => {
       try {
-        const inspection = await inspectUrl(cleanUrl);
+        const inspection = await inspectUrl(cleanUrl, 8, task.referrer);
         // Check if user paused or deleted the task while inspection was in flight
         const currentTask = this.tasks.get(task.id);
         if (!currentTask || currentTask.status === 'paused' || currentTask.status === 'cancelled') {
@@ -238,10 +284,15 @@ export class DownloadManager {
         }
 
         task.finalUrl = inspection.finalUrl;
-        task.fileSize = inspection.fileSize;
+        if (inspection.fileSize > 0) {
+          task.fileSize = inspection.fileSize;
+        }
         task.supportsRanges = inspection.supportsRanges;
-        task.category = isTorrent ? 'torrent' : inspection.category;
-        task.threadCount = inspection.supportsRanges ? threadCount : 1;
+        task.category = isTorrent ? 'torrent' : (inspection.category !== 'other' ? inspection.category : task.category);
+        task.threadCount = inspection.supportsRanges ? threadCount : threadCount;
+        if (inspection.mimeType && inspection.mimeType !== 'application/octet-stream') {
+          task.mimeType = inspection.mimeType;
+        }
         if (inspection.infoHash) {
           task.infoHash = inspection.infoHash;
         }
@@ -267,7 +318,7 @@ export class DownloadManager {
             task.fileName = path.basename(updatedPath);
             task.savePath = updatedPath;
             if (!isTorrent) {
-              task.category = categorizeFileName(task.fileName, inspection.mimeType, task.finalUrl);
+              task.category = categorizeFileName(task.fileName, inspection.mimeType || task.mimeType || '', task.finalUrl);
             }
           }
         }
@@ -568,11 +619,23 @@ export class DownloadManager {
   }
 
   private lastBroadcastTime = 0;
+  private broadcastTrailingTimer: NodeJS.Timeout | null = null;
   private broadcastTasksThrottled(): void {
     const now = Date.now();
-    if (now - this.lastBroadcastTime > 300) {
+    const elapsed = now - this.lastBroadcastTime;
+    if (elapsed >= 200) {
+      if (this.broadcastTrailingTimer) {
+        clearTimeout(this.broadcastTrailingTimer);
+        this.broadcastTrailingTimer = null;
+      }
       this.lastBroadcastTime = now;
       this.broadcastTasks();
+    } else if (!this.broadcastTrailingTimer) {
+      this.broadcastTrailingTimer = setTimeout(() => {
+        this.broadcastTrailingTimer = null;
+        this.lastBroadcastTime = Date.now();
+        this.broadcastTasks();
+      }, 200 - elapsed);
     }
   }
 

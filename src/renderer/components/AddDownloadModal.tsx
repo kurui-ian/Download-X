@@ -9,9 +9,11 @@ import {
   Loader2, 
   CheckCircle2, 
   ClipboardPaste,
-  Radio
+  Radio,
+  FileCheck2,
+  HardDriveDownload
 } from 'lucide-react';
-import { DownloadTask, UrlInspectionResult } from '../types';
+import { DownloadTask, UrlInspectionResult, BrowserModalPayload } from '../types';
 import { formatBytes } from '../utils/formatters';
 
 interface AddDownloadModalProps {
@@ -24,10 +26,20 @@ interface AddDownloadModalProps {
     threadCount?: number;
     autoStart?: boolean;
     forceRedownload?: boolean;
+    mimeType?: string;
+    fileSize?: number;
+    referrer?: string;
+    source?: string;
+    sourcePageUrl?: string;
+    sourcePageTitle?: string;
+    quality?: string;
+    mediaType?: 'video' | 'audio' | 'image' | 'file' | 'torrent';
+    secondaryAudioUrl?: string;
   }) => void;
   defaultSaveDir: string;
   defaultConnections: number;
   initialUrl?: string;
+  initialData?: BrowserModalPayload;
 }
 
 export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
@@ -37,6 +49,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   defaultSaveDir,
   defaultConnections,
   initialUrl,
+  initialData,
 }) => {
   const [url, setUrl] = useState('');
   const [fileName, setFileName] = useState('');
@@ -55,12 +68,17 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       setSaveDir(defaultSaveDir);
       setThreadCount(defaultConnections || 8);
       setDuplicateTask(null);
-      setForceRedownload(false);
+      setForceRedownload(Boolean(initialData?.forceRedownload));
+      setInspection(null);
+      setInspectError(null);
 
-      if (initialUrl && initialUrl.trim()) {
-        const clean = initialUrl.trim();
-        setUrl(clean);
-        triggerInspect(clean);
+      const targetInitialUrl = (initialData?.url || initialUrl || '').trim();
+      const prefilledName = (initialData?.fileName || '').trim();
+      setFileName(prefilledName);
+
+      if (targetInitialUrl) {
+        setUrl(targetInitialUrl);
+        triggerInspect(targetInitialUrl, prefilledName, initialData?.referrer);
       } else if (window.electronAPI?.readClipboard) {
         // Automatically read native clipboard if no initialUrl
         window.electronAPI.readClipboard().then((clip) => {
@@ -86,9 +104,9 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       setDuplicateTask(null);
       setForceRedownload(false);
     }
-  }, [isOpen, defaultSaveDir, defaultConnections, initialUrl]);
+  }, [isOpen, defaultSaveDir, defaultConnections, initialUrl, initialData]);
 
-  const triggerInspect = async (targetUrl: string) => {
+  const triggerInspect = async (targetUrl: string, existingName?: string, customReferrer?: string) => {
     const clean = targetUrl.trim();
     if (
       !clean.startsWith('http://') && 
@@ -113,11 +131,21 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     }
 
     try {
-      const result = await window.electronAPI.inspectUrl(clean);
+      const result = await window.electronAPI.inspectUrl(clean, customReferrer || initialData?.referrer);
       setInspection(result);
-      if (!fileName || fileName === '') {
-        setFileName(result.fileName);
-      }
+      setFileName((prev) => {
+        const current = (prev || existingName || '').trim();
+        if (current) {
+          // If browser provided a title without an extension and inspection found an extension, append it
+          const hasExt = /\.[a-z0-9]{2,5}$/i.test(current);
+          const inspectedExtMatch = result.fileName ? result.fileName.match(/(\.[a-z0-9]{2,5})$/i) : null;
+          if (!hasExt && inspectedExtMatch) {
+            return `${current}${inspectedExtMatch[1]}`;
+          }
+          return current;
+        }
+        return result.fileName || '';
+      });
     } catch (err: any) {
       setInspectError(err.message || 'Unable to inspect metadata');
       setInspection(null);
@@ -132,6 +160,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       if (clip) {
         const clean = clip.trim();
         setUrl(clean);
+        setFileName('');
         triggerInspect(clean);
       }
     } catch (e) {
@@ -145,6 +174,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
         const selected = await window.electronAPI.selectTorrentFile();
         if (selected) {
           setUrl(selected);
+          setFileName('');
           triggerInspect(selected);
         }
       }
@@ -171,6 +201,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       const filePath = window.electronAPI?.getPathForFile ? window.electronAPI.getPathForFile(file) : ((file as any).path || '');
       if (filePath) {
         setUrl(filePath);
+        setFileName('');
         triggerInspect(filePath);
         return;
       }
@@ -179,9 +210,45 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text');
     if (text && text.trim()) {
       setUrl(text.trim());
+      setFileName('');
       triggerInspect(text.trim());
     }
   };
+
+  const effectiveFileSize =
+    (inspection && inspection.fileSize > 0 ? inspection.fileSize : 0) ||
+    (initialData && initialData.fileSize && initialData.fileSize > 0 ? initialData.fileSize : 0);
+
+  const effectiveMimeType =
+    (inspection && inspection.mimeType && inspection.mimeType !== 'application/octet-stream'
+      ? inspection.mimeType
+      : initialData?.mimeType) || inspection?.mimeType;
+
+  const isTorrent =
+    url.trim().toLowerCase().startsWith('magnet:?') ||
+    url.trim().toLowerCase().endsWith('.torrent') ||
+    Boolean(inspection?.isTorrent) ||
+    initialData?.mediaType === 'torrent';
+
+  const effectiveCategory = isTorrent
+    ? 'BitTorrent'
+    : inspection?.category && inspection.category !== 'other'
+    ? inspection.category
+    : initialData?.mediaType || inspection?.category || 'file';
+
+  const displayFileName =
+    fileName.trim() ||
+    inspection?.fileName ||
+    initialData?.fileName ||
+    (isTorrent ? 'Torrent Download' : 'Auto-detected from URL');
+
+  const normalizedSaveDir = (saveDir || defaultSaveDir || '').replace(/[\\/]+$/, '');
+  const separator = normalizedSaveDir.includes('/') ? '/' : '\\';
+  const fullSavePath = normalizedSaveDir
+    ? `${normalizedSaveDir}${separator}${displayFileName}`
+    : displayFileName;
+
+  const isFromBrowser = Boolean(initialData?.source);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,11 +257,20 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
     onAdd({
       url: cleanUrl,
-      fileName: fileName.trim() || undefined,
+      fileName: fileName.trim() || inspection?.fileName || initialData?.fileName || undefined,
       saveDir: saveDir || undefined,
       threadCount: Number(threadCount),
       autoStart,
       forceRedownload: forceRedownload || !duplicateTask,
+      mimeType: effectiveMimeType,
+      fileSize: effectiveFileSize > 0 ? effectiveFileSize : undefined,
+      referrer: initialData?.referrer,
+      source: initialData?.source,
+      sourcePageUrl: initialData?.sourcePageUrl,
+      sourcePageTitle: initialData?.sourcePageTitle,
+      quality: initialData?.quality,
+      mediaType: initialData?.mediaType,
+      secondaryAudioUrl: initialData?.secondaryAudioUrl,
     });
 
     onClose();
@@ -202,12 +278,9 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
   const setSampleUrl = (sampleUrl: string) => {
     setUrl(sampleUrl);
+    setFileName('');
     triggerInspect(sampleUrl);
   };
-
-  const isTorrent = url.trim().toLowerCase().startsWith('magnet:?') || 
-                    url.trim().toLowerCase().endsWith('.torrent') || 
-                    Boolean(inspection?.isTorrent);
 
   if (!isOpen) return null;
 
@@ -225,16 +298,23 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-sm">
-              {isTorrent ? <Radio className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+              {isTorrent ? <Radio className="w-4 h-4" /> : isFromBrowser ? <HardDriveDownload className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
             </div>
             <div>
-              <h2 className="text-sm font-bold text-zinc-900 dark:text-white">
-                {isTorrent ? 'BitTorrent Download' : 'New Download'}
-              </h2>
-              <p className="text-[11px] text-zinc-500">
-                {isTorrent 
-                  ? 'P2P swarm acceleration with pause & resume' 
-                  : 'Fast multi-threaded HTTP/HTTPS downloading'}
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-white">
+                  {isTorrent ? 'Confirm BitTorrent Download' : 'Confirm Download'}
+                </h2>
+                {isFromBrowser && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-semibold">
+                    From {initialData?.source}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-500 truncate max-w-[340px]">
+                {initialData?.sourcePageTitle
+                  ? `Source: ${initialData.sourcePageTitle}`
+                  : 'Review file name, file size, and where the item will be saved'}
               </p>
             </div>
           </div>
@@ -249,11 +329,185 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Prominent Download Confirmation Summary Card (File Name, File Size, Format/Quality) */}
+          {url.trim() && (
+            <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 space-y-2.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-200/80 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <FileCheck2 className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      File to Download
+                    </div>
+                    <div
+                      className="text-xs font-bold text-zinc-900 dark:text-white truncate font-mono"
+                      title={displayFileName}
+                    >
+                      {displayFileName}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Prominent File Size Badge */}
+                <div className="text-right flex-shrink-0">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                    File Size
+                  </div>
+                  <div className="text-xs font-mono font-bold text-zinc-900 dark:text-white">
+                    {effectiveFileSize > 0 ? (
+                      formatBytes(effectiveFileSize)
+                    ) : isInspecting ? (
+                      <span className="inline-flex items-center gap-1 text-zinc-500">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Checking...
+                      </span>
+                    ) : isTorrent ? (
+                      'Swarm Metadata'
+                    ) : (
+                      'Stream / Auto'
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Format, Quality & Multi-Thread Badges */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-zinc-200/70 dark:border-zinc-800/70 text-[11px] font-mono">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="px-2 py-0.5 rounded bg-zinc-200/80 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 font-semibold uppercase">
+                    {effectiveCategory}
+                  </span>
+                  {initialData?.quality && (
+                    <span className="px-2 py-0.5 rounded bg-black text-white dark:bg-white dark:text-black font-semibold">
+                      {initialData.quality}
+                    </span>
+                  )}
+                  {inspection?.torrentFiles && inspection.torrentFiles.length > 0 && (
+                    <span className="text-zinc-500">
+                      ({inspection.torrentFiles.length} files)
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  {isTorrent ? (
+                    <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
+                      <Radio className="w-2.5 h-2.5" /> P2P Swarm
+                    </span>
+                  ) : inspection?.supportsRanges ? (
+                    <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> Multi-Thread Fast
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> Direct Stream
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Duplicate Alert Card */}
+          {duplicateTask && (
+            <div className="p-3.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-zinc-900 dark:text-zinc-100" />
+                <div className="flex-1 text-xs">
+                  <div className="font-semibold">Duplicate Download Detected</div>
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    This file is already in your tasks as{' '}
+                    <span className="font-semibold text-zinc-900 dark:text-white">{duplicateTask.fileName}</span>{' '}
+                    ({duplicateTask.status}).
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        if (duplicateTask.status === 'completed') {
+                          window.electronAPI.openFile(duplicateTask.id);
+                        } else {
+                          window.electronAPI.openFolder(duplicateTask.id);
+                        }
+                      }}
+                      className="px-2.5 py-1 text-[11px] bg-black dark:bg-white text-white dark:text-black rounded-lg font-medium transition-opacity hover:opacity-90"
+                    >
+                      {duplicateTask.status === 'completed' ? 'Open Existing File' : 'Show in Folder'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForceRedownload(true);
+                        setDuplicateTask(null);
+                      }}
+                      className="px-2.5 py-1 text-[11px] bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 rounded-lg transition-colors"
+                    >
+                      Download Again
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Save Filename Confirmation */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                Confirm File Name
+              </label>
+              {effectiveFileSize > 0 && (
+                <span className="text-[11px] font-mono text-zinc-500">
+                  Size: <strong className="text-zinc-900 dark:text-zinc-100">{formatBytes(effectiveFileSize)}</strong>
+                </span>
+              )}
+            </div>
+            <input
+              type="text"
+              value={fileName}
+              onChange={(e) => setFileName(e.target.value)}
+              placeholder="Auto-detected from file"
+              className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-xl px-3.5 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none transition-all font-mono"
+            />
+          </div>
+
+          {/* Save Directory & Exact Destination Path Preview */}
+          <div>
+            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
+              Where to Save (Save Location)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={saveDir}
+                className="flex-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-700 dark:text-zinc-300 outline-none truncate font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleBrowseDir}
+                className="px-3 py-2 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-colors border border-zinc-300 dark:border-zinc-700"
+              >
+                <Folder className="w-3.5 h-3.5" />
+                <span>Browse</span>
+              </button>
+            </div>
+            {/* Full Target File Path Confirmation */}
+            <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200/80 dark:border-zinc-800/80 flex items-center gap-1.5 text-[11px] font-mono">
+              <span className="text-zinc-400 dark:text-zinc-500 flex-shrink-0">Will be saved to:</span>
+              <span className="text-zinc-800 dark:text-zinc-200 truncate" title={fullSavePath}>
+                {fullSavePath}
+              </span>
+            </div>
+          </div>
+
           {/* URL Input with Quick Actions */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                URL, Magnet link, or .torrent file
+                Download URL / Source
               </label>
               <div className="flex items-center gap-2.5">
                 <button
@@ -279,7 +533,6 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
               <input
                 type="text"
                 required
-                autoFocus
                 value={url}
                 onChange={(e) => {
                   setUrl(e.target.value);
@@ -293,7 +546,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                   }
                 }}
                 placeholder="https://... or magnet:?xt=urn:btih:... or drag & drop .torrent"
-                className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-xl px-3.5 py-2.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none pr-24 font-mono transition-all"
+                className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-xl px-3.5 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none pr-24 font-mono transition-all"
               />
               <div className="absolute right-1.5 flex items-center gap-1">
                 <button
@@ -314,156 +567,41 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
               </div>
             </div>
 
-            {/* Quick Test Samples */}
-            <div className="flex flex-wrap items-center gap-1.5 mt-2">
-              <span className="text-[10px] text-zinc-400 font-mono">Samples:</span>
-              <button
-                type="button"
-                onClick={() => setSampleUrl('https://proof.ovh.net/files/10Mb.dat')}
-                className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 transition-colors"
-              >
-                10MB HTTP
-              </button>
-              <button
-                type="button"
-                onClick={() => setSampleUrl('magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny')}
-                className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 rounded border border-zinc-300 dark:border-zinc-700 transition-colors flex items-center gap-1"
-              >
-                <Radio className="w-2.5 h-2.5" />
-                <span>Big Buck Bunny</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSampleUrl('https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso.torrent')}
-                className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 transition-colors"
-              >
-                Ubuntu ISO (.torrent)
-              </button>
-            </div>
+            {!isFromBrowser && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <span className="text-[10px] text-zinc-400 font-mono">Samples:</span>
+                <button
+                  type="button"
+                  onClick={() => setSampleUrl('https://proof.ovh.net/files/10Mb.dat')}
+                  className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 transition-colors"
+                >
+                  10MB HTTP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSampleUrl('magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny')}
+                  className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 rounded border border-zinc-300 dark:border-zinc-700 transition-colors flex items-center gap-1"
+                >
+                  <Radio className="w-2.5 h-2.5" />
+                  <span>Big Buck Bunny</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSampleUrl('https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso.torrent')}
+                  className="text-[10px] font-mono px-2 py-0.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 transition-colors"
+                >
+                  Ubuntu ISO (.torrent)
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Duplicate Alert Card */}
-          {duplicateTask && (
-            <div className="p-3.5 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100">
-              <div className="flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-zinc-900 dark:text-zinc-100" />
-                <div className="flex-1 text-xs">
-                  <div className="font-semibold">Duplicate Download Detected</div>
-                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    This file is already in your tasks as{' '}
-                    <span className="font-semibold text-zinc-900 dark:text-white">{duplicateTask.fileName}</span>{' '}
-                    ({duplicateTask.status}).
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        if (duplicateTask.status === 'completed') {
-                          window.electronAPI.openFile(duplicateTask.id);
-                        }
-                      }}
-                      className="px-2.5 py-1 text-[11px] bg-black dark:bg-white text-white dark:text-black rounded-lg font-medium transition-opacity hover:opacity-90"
-                    >
-                      {duplicateTask.status === 'completed' ? 'Open Existing File' : 'View Task'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setForceRedownload(true);
-                        setDuplicateTask(null);
-                      }}
-                      className="px-2.5 py-1 text-[11px] bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 rounded-lg transition-colors"
-                    >
-                      Download Again
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Inspection Metadata Card */}
-          {inspection && (
-            <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-xs">
-              <div className="space-y-0.5">
-                <div className="font-mono font-semibold text-zinc-900 dark:text-zinc-100">
-                  Size: {inspection.fileSize > 0 ? formatBytes(inspection.fileSize) : 'Swarm metadata loading...'}
-                </div>
-                <div className="text-[11px] text-zinc-500 font-mono">
-                  Format:{' '}
-                  <span className="font-semibold text-zinc-800 dark:text-zinc-200 uppercase">
-                    {isTorrent ? 'BitTorrent' : inspection.category}
-                  </span>
-                  {inspection.torrentFiles && inspection.torrentFiles.length > 0 && (
-                    <span className="text-zinc-400 ml-1.5 font-normal">
-                      ({inspection.torrentFiles.length} files)
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                {isTorrent ? (
-                  <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
-                    <Radio className="w-3 h-3" /> P2P Swarm
-                  </span>
-                ) : inspection.supportsRanges ? (
-                  <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
-                    <CheckCircle2 className="w-3 h-3" /> Multi-Thread Fast
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
-                    <AlertCircle className="w-3 h-3" /> Single Stream
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {inspectError && (
+          {inspectError && !effectiveFileSize && (
             <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-xs text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
               <span>{inspectError} (Download will still proceed)</span>
             </div>
           )}
-
-          {/* Save Filename */}
-          <div>
-            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
-              File Name
-            </label>
-            <input
-              type="text"
-              value={fileName}
-              onChange={(e) => setFileName(e.target.value)}
-              placeholder="Auto-detected from file"
-              className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-xl px-3.5 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none transition-all font-mono"
-            />
-          </div>
-
-          {/* Save Directory */}
-          <div>
-            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
-              Save Location
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                readOnly
-                value={saveDir}
-                className="flex-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-700 dark:text-zinc-300 outline-none truncate font-mono"
-              />
-              <button
-                type="button"
-                onClick={handleBrowseDir}
-                className="px-3 py-2 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-colors border border-zinc-300 dark:border-zinc-700"
-              >
-                <Folder className="w-3.5 h-3.5" />
-                <span>Browse</span>
-              </button>
-            </div>
-          </div>
 
           {/* Parallel Connections Slider (HTTP only) */}
           {!isTorrent && (
@@ -496,7 +634,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
               className="accent-black dark:accent-white rounded cursor-pointer w-4 h-4"
             />
             <label htmlFor="autoStart" className="text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer select-none">
-              Start downloading immediately
+              Start downloading immediately after confirmation
             </label>
           </div>
 
@@ -511,9 +649,10 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
             </button>
             <button
               type="submit"
+              autoFocus
               className="px-5 py-2.5 bg-black dark:bg-white text-white dark:text-black hover:opacity-90 font-medium text-xs rounded-xl shadow-sm transition-all transform active:scale-95"
             >
-              {autoStart ? 'Download Now' : 'Add to Queue'}
+              {autoStart ? 'Confirm & Download' : 'Confirm & Add to Queue'}
             </button>
           </div>
         </form>
@@ -521,3 +660,4 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     </div>
   );
 };
+

@@ -1,6 +1,21 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron';
 import type { AppSettings, DownloadTask, GlobalSpeedStats, UrlInspectionResult } from '../main/engine/types';
 
+export interface BrowserModalPayload {
+  url: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  quality?: string;
+  referrer?: string;
+  source?: string;
+  sourcePageUrl?: string;
+  sourcePageTitle?: string;
+  mediaType?: 'video' | 'audio' | 'image' | 'file' | 'torrent';
+  secondaryAudioUrl?: string;
+  forceRedownload?: boolean;
+}
+
 export interface ElectronAPI {
   getTasks: () => Promise<DownloadTask[]>;
   checkDuplicate: (url: string) => Promise<DownloadTask | null>;
@@ -11,6 +26,15 @@ export interface ElectronAPI {
     threadCount?: number;
     autoStart?: boolean;
     forceRedownload?: boolean;
+    mimeType?: string;
+    fileSize?: number;
+    referrer?: string;
+    source?: string;
+    sourcePageUrl?: string;
+    sourcePageTitle?: string;
+    quality?: string;
+    mediaType?: 'video' | 'audio' | 'image' | 'file' | 'torrent';
+    secondaryAudioUrl?: string;
   }) => Promise<DownloadTask>;
   pauseDownload: (id: string) => Promise<boolean>;
   resumeDownload: (id: string) => Promise<boolean>;
@@ -21,17 +45,21 @@ export interface ElectronAPI {
   clearCompleted: () => Promise<boolean>;
   openFile: (id: string) => Promise<boolean>;
   openFolder: (id: string) => Promise<boolean>;
-  inspectUrl: (url: string) => Promise<UrlInspectionResult>;
+  inspectUrl: (url: string, referrer?: string) => Promise<UrlInspectionResult>;
   selectDirectory: () => Promise<string | null>;
   selectTorrentFile: () => Promise<string | null>;
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: AppSettings) => Promise<boolean>;
   onTasksUpdated: (callback: (tasks: DownloadTask[]) => void) => () => void;
   onSpeedStats: (callback: (stats: GlobalSpeedStats) => void) => () => void;
+  onSettingsUpdated?: (callback: (settings: AppSettings) => void) => () => void;
+  onBrowserOpenAddModal?: (callback: (payload: BrowserModalPayload) => void) => () => void;
   readClipboard: () => Promise<string>;
   getFileThumbnail: (filePath: string) => Promise<string | null>;
   getPathForFile: (file: File) => string;
   setNativeTheme: (theme: 'system' | 'light' | 'dark') => Promise<boolean>;
+  getBridgeStatus?: () => Promise<{ registered: boolean; hostName: string; extensionId: string; manifestPath: string }>;
+  registerNativeHost?: (customExtId?: string) => Promise<{ registered: boolean; hostName: string; extensionId: string; manifestPath: string }>;
 }
 
 const api: ElectronAPI = {
@@ -47,7 +75,7 @@ const api: ElectronAPI = {
   clearCompleted: () => ipcRenderer.invoke('tasks:clear-completed'),
   openFile: (id) => ipcRenderer.invoke('tasks:open-file', id),
   openFolder: (id) => ipcRenderer.invoke('tasks:open-folder', id),
-  inspectUrl: (url) => ipcRenderer.invoke('url:inspect', url),
+  inspectUrl: (url, referrer) => ipcRenderer.invoke('url:inspect', url, referrer),
   selectDirectory: () => ipcRenderer.invoke('dialog:select-dir'),
   selectTorrentFile: () => ipcRenderer.invoke('dialog:select-torrent-file'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -62,6 +90,16 @@ const api: ElectronAPI = {
     ipcRenderer.on('speed-stats', handler);
     return () => ipcRenderer.removeListener('speed-stats', handler);
   },
+  onSettingsUpdated: (callback) => {
+    const handler = (_event: IpcRendererEvent, settings: AppSettings) => callback(settings);
+    ipcRenderer.on('settings-updated', handler);
+    return () => ipcRenderer.removeListener('settings-updated', handler);
+  },
+  onBrowserOpenAddModal: (callback) => {
+    const handler = (_event: IpcRendererEvent, payload: BrowserModalPayload) => callback(payload);
+    ipcRenderer.on('browser:open-add-modal', handler);
+    return () => ipcRenderer.removeListener('browser:open-add-modal', handler);
+  },
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   getFileThumbnail: (filePath: string) => ipcRenderer.invoke('app:get-file-thumbnail', filePath),
   getPathForFile: (file: File) => {
@@ -75,6 +113,8 @@ const api: ElectronAPI = {
     return (file as any).path || '';
   },
   setNativeTheme: (theme: 'system' | 'light' | 'dark') => ipcRenderer.invoke('app:set-theme', theme),
+  getBridgeStatus: () => ipcRenderer.invoke('bridge:status'),
+  registerNativeHost: (customExtId?: string) => ipcRenderer.invoke('bridge:register-host', customExtId),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

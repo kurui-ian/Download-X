@@ -1,4 +1,4 @@
-import type { ElectronAPI } from '../preload';
+import type { ElectronAPI, BrowserModalPayload } from '../preload';
 import type { DownloadTask, TaskCategory, TaskStatus, AppSettings, GlobalSpeedStats, UrlInspectionResult, ChunkInfo } from '../main/engine/types';
 
 declare global {
@@ -7,4 +7,5 @@ declare global {
   }
 }
 
-export type { DownloadTask, TaskCategory, TaskStatus, AppSettings, GlobalSpeedStats, UrlInspectionResult, ChunkInfo };
+export type { DownloadTask, TaskCategory, TaskStatus, AppSettings, GlobalSpeedStats, UrlInspectionResult, ChunkInfo, BrowserModalPayload };
+

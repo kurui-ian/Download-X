@@ -97,6 +97,20 @@ DLX splits supported downloads into multiple parts and downloads them concurrent
 
 Each download is managed by the download queue, while the Electron main process handles the actual file operations. The React renderer is responsible for displaying the queue, progress, categories, and controls.
 
+## Browser Integration
+
+DLX includes a browser extension for Chrome and Chromium-based browsers.
+
+The extension can:
+
+- Intercept browser downloads
+- Send downloads directly to DLX
+- Detect accessible video, audio and image resources
+- Provide media download options
+- Send torrent links to DLX
+
+See [`browser-extension/README.md`](browser-extension/README.md) for installation and development instructions.
+
 ## Current Status
 
 DLX is currently a work in progress. The core download functionality is working, but the application is still being improved, especially the user interface and overall user experience.

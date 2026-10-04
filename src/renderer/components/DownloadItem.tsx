@@ -153,6 +153,11 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
               <span className="text-zinc-800 dark:text-zinc-200 font-semibold">
                 {task.progress > 0 ? `${task.progress.toFixed(1)}%` : '0%'}
               </span>
+              {task.quality && (
+                <span className="inline-block px-1.5 py-0.2 text-[9px] bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 rounded font-medium">
+                  {task.quality}
+                </span>
+              )}
               {task.protocol === 'torrent' ? (
                 <span className="inline-block px-1.5 py-0.2 text-[9px] bg-zinc-100 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded font-medium">
                   Torrent
@@ -162,6 +167,11 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
                   Multi-thread
                 </span>
               ) : null}
+              {task.source && (
+                <span className="hidden md:inline-block px-1.5 py-0.2 text-[9px] bg-zinc-100 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800 rounded">
+                  {task.source}
+                </span>
+              )}
               {task.protocol === 'torrent' && task.peers !== undefined && (
                 <span className="text-[10px] text-zinc-600 dark:text-zinc-400">
                   {task.peers} peers
@@ -271,8 +281,18 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
       {/* Expanded Details Section */}
       {showDetails && (
         <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 flex flex-col gap-1.5">
+          {task.source && (
+            <div className="flex items-center justify-between">
+              <span className="text-zinc-400 dark:text-zinc-500">Origin:</span>
+              <span className="truncate max-w-md font-mono text-[11px] text-zinc-800 dark:text-zinc-200">
+                Source: {task.source}
+                {task.sourcePageTitle ? ` • Page: ${task.sourcePageTitle}` : ''}
+                {task.quality ? ` • Quality: ${task.quality}` : ''}
+              </span>
+            </div>
+          )}
           <div className="flex items-center justify-between">
-            <span className="text-zinc-400 dark:text-zinc-500">Source:</span>
+            <span className="text-zinc-400 dark:text-zinc-500">URL:</span>
             <span className="truncate max-w-md font-mono text-[11px] text-zinc-800 dark:text-zinc-200" title={task.url}>
               {task.url}
             </span>

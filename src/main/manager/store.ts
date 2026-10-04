@@ -36,18 +36,33 @@ export class PersistenceStore {
       enableNotifications: true,
       monitorClipboard: false,
       minimizeToTray: true,
+      browserIntegrationEnabled: true,
+      autoInterceptDownloads: true,
+      showMediaDownloadButton: true,
+      detectVideos: true,
+      detectAudio: true,
+      detectImages: true,
+      askBeforeIntercepting: true,
     };
 
     try {
       if (fs.existsSync(this.settingsFile)) {
         const raw = fs.readFileSync(this.settingsFile, 'utf-8');
         const parsed = JSON.parse(raw);
+        if (!parsed._confirmPromptMigrated) {
+          parsed.askBeforeIntercepting = true;
+          parsed._confirmPromptMigrated = true;
+          const merged = { ...defaultSettings, ...parsed };
+          this.saveSettings(merged);
+          return merged;
+        }
         return { ...defaultSettings, ...parsed };
       }
     } catch {}
 
-    this.saveSettings(defaultSettings);
-    return defaultSettings;
+    const initial = { ...defaultSettings, _confirmPromptMigrated: true } as AppSettings;
+    this.saveSettings(initial);
+    return initial;
   }
 
   public saveSettings(settings: AppSettings): void {

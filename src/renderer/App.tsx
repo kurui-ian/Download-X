@@ -4,7 +4,8 @@ import {
   TaskStatus, 
   TaskCategory, 
   AppSettings, 
-  GlobalSpeedStats 
+  GlobalSpeedStats,
+  BrowserModalPayload
 } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -33,6 +34,7 @@ export const App: React.FC = () => {
     enableNotifications: true,
     monitorClipboard: false,
     minimizeToTray: true,
+    askBeforeIntercepting: true,
   });
 
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
@@ -41,6 +43,7 @@ export const App: React.FC = () => {
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addModalInitialUrl, setAddModalInitialUrl] = useState<string | undefined>(undefined);
+  const [addModalInitialData, setAddModalInitialData] = useState<BrowserModalPayload | undefined>(undefined);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
@@ -58,9 +61,27 @@ export const App: React.FC = () => {
         setSpeedStats(stats);
       });
 
+      const unbindSettings = window.electronAPI.onSettingsUpdated
+        ? window.electronAPI.onSettingsUpdated((updatedSettings) => {
+            setSettings(updatedSettings);
+          })
+        : () => {};
+
+      const unbindBrowserModal = window.electronAPI.onBrowserOpenAddModal
+        ? window.electronAPI.onBrowserOpenAddModal((payload) => {
+            if (payload && payload.url) {
+              setAddModalInitialUrl(payload.url);
+              setAddModalInitialData(payload);
+              setIsAddModalOpen(true);
+            }
+          })
+        : () => {};
+
       return () => {
         unbindTasks();
         unbindSpeed();
+        unbindSettings();
+        unbindBrowserModal();
       };
     }
   }, []);
@@ -260,6 +281,15 @@ export const App: React.FC = () => {
     threadCount?: number;
     autoStart?: boolean;
     forceRedownload?: boolean;
+    mimeType?: string;
+    fileSize?: number;
+    referrer?: string;
+    source?: string;
+    sourcePageUrl?: string;
+    sourcePageTitle?: string;
+    quality?: string;
+    mediaType?: 'video' | 'audio' | 'image' | 'file' | 'torrent';
+    secondaryAudioUrl?: string;
   }) => {
     await window.electronAPI.addDownload(params);
   };
@@ -298,6 +328,7 @@ export const App: React.FC = () => {
         <Header
           onOpenAddModal={() => {
             setAddModalInitialUrl(undefined);
+            setAddModalInitialData(undefined);
             setIsAddModalOpen(true);
           }}
           onPauseAll={handlePauseAll}
@@ -318,6 +349,7 @@ export const App: React.FC = () => {
           onOpenFolder={handleOpenFolder}
           onOpenAddModal={() => {
             setAddModalInitialUrl(undefined);
+            setAddModalInitialData(undefined);
             setIsAddModalOpen(true);
           }}
           onQuickTestDownload={(testUrl) => handleAddDownload({ url: testUrl, autoStart: true })}
@@ -330,11 +362,13 @@ export const App: React.FC = () => {
         onClose={() => {
           setIsAddModalOpen(false);
           setAddModalInitialUrl(undefined);
+          setAddModalInitialData(undefined);
         }}
         onAdd={handleAddDownload}
         defaultSaveDir={settings.downloadDir}
         defaultConnections={settings.defaultConnections}
         initialUrl={addModalInitialUrl}
+        initialData={addModalInitialData}
       />
 
       {/* Preferences & Settings Modal */}

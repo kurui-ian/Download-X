@@ -5,6 +5,8 @@ import { DownloadManager } from './manager/DownloadManager';
 import { PersistenceStore } from './manager/store';
 import { inspectUrl } from './engine/inspector';
 import { AppSettings } from './engine/types';
+import { NativeBridgeServer } from './bridge/NativeBridgeServer';
+import { NativeHostRegistrar } from './bridge/NativeHostRegistrar';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -12,6 +14,7 @@ let isQuitting = false;
 
 const store = new PersistenceStore();
 const downloadManager = new DownloadManager(store);
+const bridgeServer = new NativeBridgeServer(downloadManager, store, () => mainWindow);
 
 // Enforce single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -199,8 +202,8 @@ function setupIpc() {
     return true;
   });
 
-  ipcMain.handle('url:inspect', async (_e, url: string) => {
-    return await inspectUrl(url);
+  ipcMain.handle('url:inspect', async (_e, url: string, referrer?: string) => {
+    return await inspectUrl(url, 8, referrer);
   });
 
   ipcMain.handle('dialog:select-dir', async () => {
@@ -299,10 +302,22 @@ function setupIpc() {
     }
     return true;
   });
+
+  ipcMain.handle('bridge:status', () => {
+    return NativeHostRegistrar.getStatus();
+  });
+
+  ipcMain.handle('bridge:register-host', async (_e, customExtId?: string) => {
+    return await NativeHostRegistrar.ensureRegistered(customExtId ? [customExtId.trim()] : []);
+  });
 }
 
 app.whenReady().then(() => {
   setupIpc();
+  bridgeServer.start();
+  NativeHostRegistrar.ensureRegistered().catch((err) => {
+    console.warn('Native host registration warning:', err);
+  });
   createMainWindow();
   createTray();
 
@@ -315,6 +330,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  bridgeServer.stop();
   downloadManager.shutdown();
 });
 

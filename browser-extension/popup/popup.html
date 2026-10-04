@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DLX — Download-X</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="popup-shell">
+    <!-- Top Brand Header -->
+    <header class="popup-header">
+      <div class="brand-left">
+        <div class="brand-logo">DX</div>
+        <div>
+          <div class="brand-title">DLX</div>
+          <div class="brand-subtitle">Download-X</div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div id="statusBadge" class="status-badge offline" title="DLX Desktop Status">
+          <span class="status-dot"></span>
+          <span id="statusText">Checking...</span>
+        </div>
+        <button id="openDlxBtn" class="icon-btn" type="button" title="Open DLX Desktop App">
+          ↗
+        </button>
+      </div>
+    </header>
+
+    <!-- Tab Bar -->
+    <nav class="tab-bar">
+      <button id="tabMediaBtn" class="tab-btn active" type="button">
+        <span>Media Detected</span>
+        <span id="mediaCountBadge" class="count-pill">0</span>
+      </button>
+      <button id="tabSettingsBtn" class="tab-btn" type="button">
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <!-- Offline Notice Banner (hidden when DLX is running) -->
+    <div id="offlineBanner" class="offline-banner hidden">
+      <div class="offline-text">
+        <strong>DLX is not running.</strong> Start DLX to queue downloads.
+      </div>
+      <button id="launchDlxBannerBtn" class="small-action-btn" type="button">
+        Open DLX
+      </button>
+    </div>
+
+    <!-- TAB 1: Detected Media View -->
+    <main id="viewMedia" class="tab-view">
+      <div id="mediaSummaryBar" class="summary-bar">
+        <span id="mediaSummaryText">Media detected</span>
+        <button id="rescanBtn" class="text-link-btn" type="button">↻ Refresh</button>
+      </div>
+
+      <div id="mediaListContainer" class="media-list">
+        <!-- Populated dynamically by popup.js -->
+      </div>
+
+      <!-- Quick URL / Magnet Send Bar -->
+      <form id="quickUrlForm" class="quick-url-bar">
+        <input
+          id="quickUrlInput"
+          type="text"
+          placeholder="Paste URL, .torrent, or magnet:? link..."
+          autocomplete="off"
+        />
+        <button type="submit" class="quick-send-btn">Send</button>
+      </form>
+    </main>
+
+    <!-- TAB 2: Extension Settings View -->
+    <section id="viewSettings" class="tab-view hidden">
+      <div class="settings-status-card">
+        <div class="settings-status-label">DLX Browser Integration</div>
+        <div id="settingsConnRow" class="settings-conn-row">
+          <span id="settingsConnDot" class="status-dot"></span>
+          <span id="settingsConnText">Checking connection...</span>
+        </div>
+      </div>
+
+      <div class="settings-list">
+        <label class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Automatically intercept downloads</span>
+            <span class="setting-desc">Capture normal browser file downloads in DLX</span>
+          </div>
+          <input id="toggleAutoIntercept" type="checkbox" class="toggle-input" checked />
+        </label>
+
+        <label class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Show media download button</span>
+            <span class="setting-desc">Show floating DLX ↓ button on videos &amp; images</span>
+          </div>
+          <input id="toggleShowButton" type="checkbox" class="toggle-input" checked />
+        </label>
+
+        <label class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Detect videos</span>
+            <span class="setting-desc">Find accessible MP4, WebM &amp; HTML5 video streams</span>
+          </div>
+          <input id="toggleDetectVideos" type="checkbox" class="toggle-input" checked />
+        </label>
+
+        <label class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Detect audio</span>
+            <span class="setting-desc">Find accessible MP3, WAV, M4A &amp; OGG audio</span>
+          </div>
+          <input id="toggleDetectAudio" type="checkbox" class="toggle-input" checked />
+        </label>
+
+        <label class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Detect images</span>
+            <span class="setting-desc">Find high-resolution images (ignores UI icons)</span>
+          </div>
+          <input id="toggleDetectImages" type="checkbox" class="toggle-input" checked />
+        </label>
+
+        <label class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Confirm before downloading</span>
+            <span class="setting-desc">Confirm file name, size &amp; save folder in DLX</span>
+          </div>
+          <input id="toggleAskBefore" type="checkbox" class="toggle-input" checked />
+        </label>
+      </div>
+    </section>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

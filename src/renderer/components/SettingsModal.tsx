@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, Folder, Save, Bell, Minimize2, Sun, Moon, Laptop, Gauge } from 'lucide-react';
+import { X, Settings, Folder, Save, Bell, Minimize2, Sun, Moon, Laptop, Gauge, Globe } from 'lucide-react';
 import { AppSettings } from '../types';
 import { ThemeMode } from '../utils/theme';
 
@@ -314,6 +314,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }
                 className="accent-black dark:accent-white rounded cursor-pointer w-4 h-4"
               />
+            </div>
+          </div>
+
+          {/* DLX Browser Integration Settings */}
+          <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                <Globe className="w-3.5 h-3.5" />
+                <span>DLX Browser Integration</span>
+              </label>
+              <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950">
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                Active
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+              <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 cursor-pointer">
+                <span className="text-[11px] text-zinc-700 dark:text-zinc-300">Auto-intercept downloads</span>
+                <input
+                  type="checkbox"
+                  checked={formData.autoInterceptDownloads !== false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, autoInterceptDownloads: e.target.checked }))
+                  }
+                  className="accent-black dark:accent-white rounded cursor-pointer w-3.5 h-3.5"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 cursor-pointer">
+                <span className="text-[11px] text-zinc-700 dark:text-zinc-300">Show media button</span>
+                <input
+                  type="checkbox"
+                  checked={formData.showMediaDownloadButton !== false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, showMediaDownloadButton: e.target.checked }))
+                  }
+                  className="accent-black dark:accent-white rounded cursor-pointer w-3.5 h-3.5"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 cursor-pointer">
+                <span className="text-[11px] text-zinc-700 dark:text-zinc-300">Detect videos</span>
+                <input
+                  type="checkbox"
+                  checked={formData.detectVideos !== false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, detectVideos: e.target.checked }))
+                  }
+                  className="accent-black dark:accent-white rounded cursor-pointer w-3.5 h-3.5"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 cursor-pointer">
+                <span className="text-[11px] text-zinc-700 dark:text-zinc-300">Detect audio</span>
+                <input
+                  type="checkbox"
+                  checked={formData.detectAudio !== false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, detectAudio: e.target.checked }))
+                  }
+                  className="accent-black dark:accent-white rounded cursor-pointer w-3.5 h-3.5"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 cursor-pointer">
+                <span className="text-[11px] text-zinc-700 dark:text-zinc-300">Detect images</span>
+                <input
+                  type="checkbox"
+                  checked={formData.detectImages !== false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, detectImages: e.target.checked }))
+                  }
+                  className="accent-black dark:accent-white rounded cursor-pointer w-3.5 h-3.5"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 cursor-pointer">
+                <span className="text-[11px] text-zinc-700 dark:text-zinc-300">Confirm before downloading</span>
+                <input
+                  type="checkbox"
+                  checked={formData.askBeforeIntercepting !== false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, askBeforeIntercepting: e.target.checked }))
+                  }
+                  className="accent-black dark:accent-white rounded cursor-pointer w-3.5 h-3.5"
+                />
+              </label>
             </div>
           </div>
 

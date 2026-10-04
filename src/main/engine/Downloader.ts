@@ -2,10 +2,20 @@ import http from 'http';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { URL } from 'url';
 import EventEmitter from 'events';
 import { ChunkInfo, DownloadTask } from './types';
-import { getRequestHeaders, isOneTimeOrSignedUrl, extractFileNameFromUrl, categorizeFileName } from './inspector';
+import {
+  getRequestHeaders,
+  isOneTimeOrSignedUrl,
+  extractFileNameFromUrl,
+  categorizeFileName,
+  resolveHlsMediaPlaylist,
+  fetchBufferWithHeaders,
+  keepAliveHttpAgent,
+  keepAliveHttpsAgent,
+} from './inspector';
 
 export class Downloader extends EventEmitter {
   private task: DownloadTask;
@@ -18,6 +28,7 @@ export class Downloader extends EventEmitter {
   private speedTimer: NodeJS.Timeout | null = null;
   private lastBytesDownloaded: number = 0;
   private lastTickTime: number = Date.now();
+  private speedSamples: Array<{ time: number; bytes: number }> = [];
   private maxRetriesPerChunk: number = 5;
   private chunkRetryCounts: Map<number, number> = new Map();
 
@@ -41,6 +52,16 @@ export class Downloader extends EventEmitter {
     this.speedLimitBytesPerSec = Math.max(0, bytesPerSec || 0);
     this.windowStartTime = Date.now();
     this.windowBytes = 0;
+  }
+
+  private isHlsUrl(urlStr: string): boolean {
+    const lower = (urlStr || '').toLowerCase();
+    return (
+      lower.includes('.m3u8') ||
+      lower.includes('__dlx_seg_') ||
+      lower.includes('format=m3u8') ||
+      lower.includes('type=m3u8')
+    );
   }
 
   private applyStreamThrottle(res: http.IncomingMessage, bytesJustReceived: number): void {
@@ -84,13 +105,16 @@ export class Downloader extends EventEmitter {
     this.emit('status-change', this.task);
 
     try {
+      const targetUrl = this.task.finalUrl || this.task.url;
+      const isHls = this.isHlsUrl(targetUrl) || Boolean((this.task as any).isHlsStream);
+
       // 1. Prepare target file on disk
       const fileExists = fs.existsSync(this.task.savePath);
       if (fileExists && this.task.downloadedBytes > 0) {
         this.fd = fs.openSync(this.task.savePath, 'r+');
       } else {
         this.fd = fs.openSync(this.task.savePath, 'w+');
-        if (this.task.fileSize > 0) {
+        if (this.task.fileSize > 0 && !isHls) {
           try {
             fs.ftruncateSync(this.fd, this.task.fileSize);
           } catch {}
@@ -105,8 +129,10 @@ export class Downloader extends EventEmitter {
       // 3. Start speed tracking ticker
       this.startSpeedTicker();
 
-      // 4. If URL is signed/tunnel or doesn't support ranges, use direct single stream
-      if (isOneTimeOrSignedUrl(this.task.url) || !this.task.supportsRanges || this.task.chunks.length <= 1) {
+      // 4. Route HLS streams, single streams, or multi-part Range downloads
+      if (isHls) {
+        await this.downloadHlsStream();
+      } else if (isOneTimeOrSignedUrl(this.task.url) || !this.task.supportsRanges || this.task.chunks.length <= 1) {
         this.downloadSingleStream();
       } else {
         // Multi-part Range download
@@ -226,6 +252,14 @@ export class Downloader extends EventEmitter {
     const parsed = new URL(targetUrl);
     const isHttps = parsed.protocol === 'https:';
     const client = isHttps ? https : http;
+    const agent = isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent;
+
+    const chunkHeaders: http.OutgoingHttpHeaders = {
+      'Range': `bytes=${currentStart}-${currentEnd}`,
+    };
+    if (this.task.referrer) {
+      chunkHeaders['Referer'] = this.task.referrer;
+    }
 
     const reqOptions: http.RequestOptions = {
       protocol: parsed.protocol,
@@ -233,9 +267,8 @@ export class Downloader extends EventEmitter {
       port: parsed.port || (isHttps ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: 'GET',
-      headers: getRequestHeaders(targetUrl, {
-        'Range': `bytes=${currentStart}-${currentEnd}`,
-      }),
+      headers: getRequestHeaders(targetUrl, chunkHeaders),
+      agent,
     };
 
     const req = client.request(reqOptions, (res) => {
@@ -346,10 +379,14 @@ export class Downloader extends EventEmitter {
     const parsed = new URL(targetUrl);
     const isHttps = parsed.protocol === 'https:';
     const client = isHttps ? https : http;
+    const agent = isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent;
 
     const customHeaders: http.OutgoingHttpHeaders = {};
     if (this.task.downloadedBytes > 0 && this.task.supportsRanges) {
       customHeaders['Range'] = `bytes=${this.task.downloadedBytes}-`;
+    }
+    if (this.task.referrer) {
+      customHeaders['Referer'] = this.task.referrer;
     }
 
     const req = client.request(
@@ -360,6 +397,7 @@ export class Downloader extends EventEmitter {
         path: parsed.pathname + parsed.search,
         method: 'GET',
         headers: getRequestHeaders(targetUrl, customHeaders),
+        agent,
       },
       (res) => {
         if (this.isPaused || this.isCancelled) {
@@ -392,7 +430,7 @@ export class Downloader extends EventEmitter {
           this.lastBytesDownloaded = 0;
         }
 
-        // Read Content-Length if missing
+        // Read Content-Length or Content-Range if missing
         const incomingLen = res.headers['content-length'];
         if (!this.task.fileSize && incomingLen) {
           const parsedLen = parseInt(incomingLen, 10);
@@ -407,12 +445,47 @@ export class Downloader extends EventEmitter {
 
         // Try extracting real filename from response headers
         const mimeType = (res.headers['content-type'] as string) || '';
+        if (mimeType.toLowerCase().includes('mpegurl')) {
+          res.destroy();
+          this.activeResponses.delete(0);
+          this.activeRequests.delete(0);
+          (this.task as any).isHlsStream = true;
+          this.downloadHlsStream().catch((err) => this.handleError(err));
+          return;
+        }
+
         const betterName = extractFileNameFromUrl(this.task.finalUrl || this.task.url, res.headers);
         if (betterName && (betterName !== this.task.fileName || !path.extname(this.task.fileName))) {
           this.attemptRename(betterName);
         }
 
         this.task.category = categorizeFileName(this.task.fileName, mimeType, this.task.finalUrl || this.task.url);
+
+        // Dynamic upgrade to multi-connection Range download if server announces Accept-Ranges: bytes
+        if (
+          this.task.downloadedBytes === 0 &&
+          !isOneTimeOrSignedUrl(this.task.url) &&
+          (this.task.threadCount || 8) > 1 &&
+          this.task.fileSize > 1024 * 1024 &&
+          (res.headers['accept-ranges'] === 'bytes' || res.statusCode === 206)
+        ) {
+          res.destroy();
+          this.activeResponses.delete(0);
+          this.activeRequests.delete(0);
+          this.task.supportsRanges = true;
+          if (this.fd !== null) {
+            try {
+              fs.ftruncateSync(this.fd, this.task.fileSize);
+            } catch {}
+          }
+          this.initializeChunks();
+          this.emit('progress', this.task);
+          for (const chunk of this.task.chunks) {
+            this.downloadChunk(chunk);
+          }
+          return;
+        }
+
         this.emit('progress', this.task);
 
         if (this.task.chunks[0]) {
@@ -422,6 +495,20 @@ export class Downloader extends EventEmitter {
         res.on('data', (buffer: Buffer) => {
           if (this.isPaused || this.isCancelled || this.fd === null) {
             res.destroy();
+            return;
+          }
+
+          // Detect disguised HLS playlist (#EXTM3U served as text/plain, .txt, .php, etc.)
+          if (
+            this.task.downloadedBytes === 0 &&
+            buffer.length >= 7 &&
+            buffer.subarray(0, 7).toString('utf8') === '#EXTM3U'
+          ) {
+            res.destroy();
+            this.activeResponses.delete(0);
+            this.activeRequests.delete(0);
+            (this.task as any).isHlsStream = true;
+            this.downloadHlsStream().catch((err) => this.handleError(err));
             return;
           }
 
@@ -467,6 +554,220 @@ export class Downloader extends EventEmitter {
     req.end();
   }
 
+  private decryptHlsSegment(buf: Buffer, key: Buffer, ivHex?: string, seqIndex: number = 0): Buffer {
+    try {
+      let iv: Buffer;
+      if (ivHex) {
+        const cleanHex = ivHex.replace(/^0x/i, '').padStart(32, '0').slice(0, 32);
+        iv = Buffer.from(cleanHex, 'hex');
+      } else {
+        iv = Buffer.alloc(16, 0);
+        iv.writeUInt32BE(seqIndex >>> 0, 12);
+      }
+      const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+      return Buffer.concat([decipher.update(buf), decipher.final()]);
+    } catch {
+      return buf;
+    }
+  }
+
+  private async downloadHlsStream(): Promise<void> {
+    if (this.isPaused || this.isCancelled) return;
+    (this.task as any).isHlsStream = true;
+
+    // Ensure target filename ends with .mp4 instead of .m3u8 or .php
+    if (/\.(m3u8|php|txt|html?)$/i.test(this.task.fileName)) {
+      const mp4Name = this.task.fileName.replace(/\.(m3u8|php|txt|html?)$/i, '.mp4');
+      this.attemptRename(mp4Name);
+    }
+
+    const targetUrl = this.task.finalUrl || this.task.url;
+    const isSequentialPattern = targetUrl.includes('__DLX_SEG_');
+    const playlist = await resolveHlsMediaPlaylist(targetUrl, this.task.referrer);
+    if (!playlist || playlist.segmentUrls.length === 0) {
+      throw new Error('Could not resolve video stream segments from playlist');
+    }
+
+    let encryptionKey: Buffer | null = null;
+    if (playlist.encryptionKeyUrl) {
+      try {
+        const keyResp = await fetchBufferWithHeaders(playlist.encryptionKeyUrl, this.task.referrer);
+        if (keyResp.statusCode < 400 && keyResp.buffer.length === 16) {
+          encryptionKey = keyResp.buffer;
+        }
+      } catch {}
+    }
+
+    let startSegIndex: number = Number((this.task as any).hlsNextSegment) || 0;
+    let diskWriteOffset: number = Number((this.task as any).hlsDiskOffset) || this.task.downloadedBytes || 0;
+
+    if (startSegIndex === 0 || diskWriteOffset === 0) {
+      startSegIndex = 0;
+      diskWriteOffset = 0;
+      this.task.downloadedBytes = 0;
+      if (playlist.initSegmentUrl) {
+        const initResp = await fetchBufferWithHeaders(playlist.initSegmentUrl, this.task.referrer);
+        if (initResp.statusCode < 400 && initResp.buffer.length > 0 && this.fd !== null) {
+          fs.writeSync(this.fd, initResp.buffer, 0, initResp.buffer.length, diskWriteOffset);
+          diskWriteOffset += initResp.buffer.length;
+          this.task.downloadedBytes = diskWriteOffset;
+          (this.task as any).hlsDiskOffset = diskWriteOffset;
+        }
+      }
+    } else {
+      // Align live downloadedBytes with confirmed disk offset on resume
+      this.task.downloadedBytes = diskWriteOffset;
+    }
+
+    if (this.task.chunks[0]) {
+      this.task.chunks[0].status = 'downloading';
+    }
+
+    const totalSegments = playlist.segmentUrls.length;
+    const workerCount = this.speedLimitBytesPerSec > 0
+      ? 1
+      : Math.min(10, Math.max(6, this.task.threadCount || 8));
+
+    let nextFetchIndex = startSegIndex;
+    let nextWriteIndex = startSegIndex;
+    let stopFetchingAt = totalSegments;
+    let fatalError: Error | null = null;
+    const completedBuffers = new Map<number, Buffer>();
+
+    const flushReadySegments = () => {
+      while (completedBuffers.has(nextWriteIndex)) {
+        const buf = completedBuffers.get(nextWriteIndex)!;
+        completedBuffers.delete(nextWriteIndex);
+        if (buf.length > 0 && this.fd !== null && !this.isPaused && !this.isCancelled) {
+          fs.writeSync(this.fd, buf, 0, buf.length, diskWriteOffset);
+          diskWriteOffset += buf.length;
+          (this.task as any).hlsDiskOffset = diskWriteOffset;
+        }
+        nextWriteIndex++;
+        (this.task as any).hlsNextSegment = nextWriteIndex;
+
+        if (nextWriteIndex > 0) {
+          const avgSegBytes = diskWriteOffset / nextWriteIndex;
+          const estimatedTotal = Math.round(avgSegBytes * stopFetchingAt);
+          this.task.fileSize = Math.max(this.task.downloadedBytes + 1, estimatedTotal);
+          if (this.task.chunks[0]) {
+            this.task.chunks[0].totalBytes = this.task.fileSize;
+            this.task.chunks[0].downloadedBytes = this.task.downloadedBytes;
+          }
+        }
+      }
+    };
+
+    const runWorker = async () => {
+      while (!this.isPaused && !this.isCancelled && !fatalError) {
+        // Prevent memory buildup if one early segment is slow while later ones complete
+        while (
+          completedBuffers.size >= workerCount * 3 &&
+          !this.isPaused &&
+          !this.isCancelled &&
+          !fatalError
+        ) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        if (this.isPaused || this.isCancelled || fatalError) return;
+        const segIdx = nextFetchIndex++;
+        if (segIdx >= stopFetchingAt) return;
+
+        const segUrl = playlist.segmentUrls[segIdx];
+        let segBuf: Buffer | null = null;
+        let lastErr: Error | null = null;
+
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (this.isPaused || this.isCancelled || fatalError || segIdx >= stopFetchingAt) return;
+          let attemptBytes = 0;
+          const segStartTime = Date.now();
+          try {
+            const resp = await fetchBufferWithHeaders(
+              segUrl,
+              this.task.referrer,
+              6,
+              20000,
+              (chunkLen) => {
+                if (this.isPaused || this.isCancelled) return;
+                attemptBytes += chunkLen;
+                this.task.downloadedBytes += chunkLen;
+                if (this.task.chunks[0]) {
+                  this.task.chunks[0].downloadedBytes = this.task.downloadedBytes;
+                }
+              }
+            );
+
+            if (resp.statusCode >= 400) {
+              if (attemptBytes > 0) {
+                this.task.downloadedBytes = Math.max(diskWriteOffset, this.task.downloadedBytes - attemptBytes);
+              }
+              if (isSequentialPattern && segIdx > 0 && (resp.statusCode === 404 || resp.statusCode === 403)) {
+                stopFetchingAt = Math.min(stopFetchingAt, segIdx);
+                return;
+              }
+              throw new Error(`Segment ${segIdx} returned HTTP ${resp.statusCode}`);
+            }
+
+            let buf = resp.buffer;
+            if (encryptionKey && buf.length > 0) {
+              const seqNum = (playlist.mediaSequenceStart || 0) + segIdx;
+              buf = this.decryptHlsSegment(buf, encryptionKey, playlist.encryptionIvHex, seqNum);
+            }
+            segBuf = buf;
+
+            if (this.speedLimitBytesPerSec > 0 && buf.length > 0) {
+              const expectedMs = (buf.length / this.speedLimitBytesPerSec) * 1000;
+              const elapsedMs = Date.now() - segStartTime;
+              if (expectedMs > elapsedMs) {
+                await new Promise((r) => setTimeout(r, Math.round(expectedMs - elapsedMs)));
+              }
+            }
+            break;
+          } catch (err: any) {
+            if (attemptBytes > 0) {
+              this.task.downloadedBytes = Math.max(diskWriteOffset, this.task.downloadedBytes - attemptBytes);
+            }
+            lastErr = err;
+            await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          }
+        }
+
+        if (!segBuf) {
+          if (!this.isPaused && !this.isCancelled && segIdx < stopFetchingAt) {
+            fatalError = lastErr || new Error(`Failed to download video segment ${segIdx}`);
+          }
+          return;
+        }
+
+        if (this.isPaused || this.isCancelled || this.fd === null) return;
+        completedBuffers.set(segIdx, segBuf);
+        flushReadySegments();
+      }
+    };
+
+    const workers: Promise<void>[] = [];
+    for (let w = 0; w < workerCount; w++) {
+      workers.push(runWorker());
+    }
+    await Promise.all(workers);
+
+    if (this.isPaused || this.isCancelled) return;
+    if (fatalError) {
+      throw fatalError;
+    }
+
+    flushReadySegments();
+    this.task.downloadedBytes = diskWriteOffset;
+    this.task.fileSize = diskWriteOffset;
+    if (this.task.chunks[0]) {
+      this.task.chunks[0].downloadedBytes = diskWriteOffset;
+      this.task.chunks[0].totalBytes = diskWriteOffset;
+      this.task.chunks[0].status = 'completed';
+    }
+    this.completeDownload();
+  }
+
   private retryChunk(chunk: ChunkInfo, err: Error): void {
     if (this.isPaused || this.isCancelled) return;
 
@@ -500,6 +801,11 @@ export class Downloader extends EventEmitter {
   private completeDownload(): void {
     if (this.isPaused || this.isCancelled) return;
     this.stopSpeedTicker();
+    if (this.fd !== null && (this.task as any).isHlsStream && this.task.downloadedBytes > 0) {
+      try {
+        fs.ftruncateSync(this.fd, this.task.downloadedBytes);
+      } catch {}
+    }
     this.closeFileDescriptor();
 
     this.task.status = 'completed';
@@ -515,28 +821,44 @@ export class Downloader extends EventEmitter {
   }
 
   private startSpeedTicker(): void {
-    this.lastTickTime = Date.now();
+    const startNow = Date.now();
+    this.lastTickTime = startNow;
     this.lastBytesDownloaded = this.task.downloadedBytes;
+    this.speedSamples = [{ time: startNow, bytes: this.task.downloadedBytes }];
 
     this.speedTimer = setInterval(() => {
       if (this.isPaused || this.isCancelled) return;
       const now = Date.now();
-      const elapsedSec = (now - this.lastTickTime) / 1000;
-      if (elapsedSec <= 0) return;
+      const currentBytes = this.task.downloadedBytes;
 
-      const bytesDelta = this.task.downloadedBytes - this.lastBytesDownloaded;
-      const rawSpeed = Math.max(0, Math.round(bytesDelta / elapsedSec));
+      this.speedSamples.push({ time: now, bytes: currentBytes });
+      // Keep a 3-second rolling window for smooth, accurate speed calculation
+      while (this.speedSamples.length > 2 && now - this.speedSamples[0].time > 3000) {
+        this.speedSamples.shift();
+      }
+
+      const oldest = this.speedSamples[0];
+      const windowSec = (now - oldest.time) / 1000;
+      const windowBytesDelta = Math.max(0, currentBytes - oldest.bytes);
+      const rollingSpeed = windowSec > 0.05 ? Math.round(windowBytesDelta / windowSec) : 0;
+
+      // Blend with previous speed for smooth UI transitions without sudden 0 B/s drops
+      let smoothedSpeed = rollingSpeed;
+      if (this.task.speed > 0 && rollingSpeed > 0) {
+        smoothedSpeed = Math.round(this.task.speed * 0.3 + rollingSpeed * 0.7);
+      }
+
       const currentSpeed = this.speedLimitBytesPerSec > 0
-        ? Math.min(rawSpeed, this.speedLimitBytesPerSec)
-        : rawSpeed;
+        ? Math.min(smoothedSpeed, this.speedLimitBytesPerSec)
+        : smoothedSpeed;
 
       this.task.speed = currentSpeed;
-      this.lastBytesDownloaded = this.task.downloadedBytes;
+      this.lastBytesDownloaded = currentBytes;
       this.lastTickTime = now;
 
       if (this.task.fileSize > 0) {
-        this.task.progress = Math.min(100, (this.task.downloadedBytes / this.task.fileSize) * 100);
-        const remainingBytes = Math.max(0, this.task.fileSize - this.task.downloadedBytes);
+        this.task.progress = Math.min(99.9, (currentBytes / this.task.fileSize) * 100);
+        const remainingBytes = Math.max(0, this.task.fileSize - currentBytes);
         this.task.eta = currentSpeed > 0 ? Math.ceil(remainingBytes / currentSpeed) : 0;
       } else {
         this.task.progress = 0;
@@ -544,7 +866,7 @@ export class Downloader extends EventEmitter {
       }
 
       this.emit('progress', this.task);
-    }, 500);
+    }, 350);
   }
 
   private stopSpeedTicker(): void {

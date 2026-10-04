@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "DLX — Download-X Browser Integration",
+  "short_name": "DLX",
+  "version": "1.0.0",
+  "description": "Official browser integration for DLX Desktop Download Manager. Intercepts downloads, detects accessible media, and sends torrents to DLX.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3nt+luptKObU+RgTqaPor2k+jiLpAaPMn9AEkKzeuZHJQtmSxYB5vWEJfON6vqnYk38LK4mCv5BdHPzo5giWp5Qn5AbODDtZ9ZNABOEmOci7DA5gI1zA4dB58DfrWwd2zE61+bf6wR/iQN/mDhazjc6rwYy5i9WQjWDjPkKBuc9c9gj7Ov8407SV6alr9QctBrnRTpEWPFxq4Pkepieiy+IhfZvDiJVFH8hKreT8BTVAhenWA0hQSR34cwzc7IvKaDVj0wJROugONLPwZ1KlTF2blu8noMCy31/vdFu+I2eNJY48xPJUT6TrtyBgg1qKvNKtuhoWMvMjicEmdkmZNQIDAQAB",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "DLX — Download-X",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "downloads",
+    "contextMenus",
+    "storage",
+    "tabs",
+    "nativeMessaging",
+    "notifications",
+    "webRequest",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/page-hook.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/media-detector.js",
+        "content/media-overlay.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

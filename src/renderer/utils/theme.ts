@@ -59,12 +59,9 @@ export function useTheme() {
   }, [theme]);
 
   const cycleTheme = useCallback(() => {
-    setTheme((current) => {
-      if (current === 'system') return 'light';
-      if (current === 'light') return 'dark';
-      return 'system';
-    });
-  }, [setTheme]);
+    const next: ThemeMode = theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system';
+    setTheme(next);
+  }, [theme, setTheme]);
 
   return { theme, setTheme, isEffectiveDark, cycleTheme };
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   FileVideo, 
   FileAudio, 
+  FileImage,
   FileText, 
   FileArchive, 
   FileCode, 
@@ -28,6 +29,8 @@ export function getCategoryBadge(category: TaskCategory): {
       return { ...common, icon: FileVideo };
     case 'audio':
       return { ...common, icon: FileAudio };
+    case 'image':
+      return { ...common, icon: FileImage };
     case 'document':
       return { ...common, icon: FileText };
     case 'archive':

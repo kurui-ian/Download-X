@@ -11,6 +11,7 @@ export type TaskCategory =
   | 'all'
   | 'video'
   | 'audio'
+  | 'image'
   | 'document'
   | 'archive'
   | 'program'
@@ -62,6 +63,16 @@ export interface DownloadTask {
   uploadSpeed?: number;
   uploadedBytes?: number;
   torrentFiles?: TorrentFileInfo[];
+
+  // Optional browser integration metadata
+  source?: string; // e.g. 'Chrome', 'Edge', 'Browser'
+  sourcePageUrl?: string;
+  sourcePageTitle?: string;
+  referrer?: string;
+  quality?: string; // e.g. '1080p', '720p', 'Original'
+  mimeType?: string;
+  mediaType?: 'video' | 'audio' | 'image' | 'file' | 'torrent';
+  secondaryAudioUrl?: string; // Future-capable separate audio stream association
 }
 
 export interface UrlInspectionResult {
@@ -85,6 +96,15 @@ export interface AppSettings {
   enableNotifications: boolean;
   monitorClipboard: boolean;
   minimizeToTray: boolean;
+
+  // Browser integration settings
+  browserIntegrationEnabled?: boolean;
+  autoInterceptDownloads?: boolean;
+  showMediaDownloadButton?: boolean;
+  detectVideos?: boolean;
+  detectAudio?: boolean;
+  detectImages?: boolean;
+  askBeforeIntercepting?: boolean;
 }
 
 export interface GlobalSpeedStats {

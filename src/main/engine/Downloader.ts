@@ -11,6 +11,8 @@ export class Downloader extends EventEmitter {
   private task: DownloadTask;
   private fd: number | null = null;
   private activeRequests: Map<number, http.ClientRequest> = new Map();
+  private activeResponses: Map<number, http.IncomingMessage> = new Map();
+  private retryTimers: Set<NodeJS.Timeout> = new Set();
   private isPaused: boolean = false;
   private isCancelled: boolean = false;
   private speedTimer: NodeJS.Timeout | null = null;
@@ -19,19 +21,65 @@ export class Downloader extends EventEmitter {
   private maxRetriesPerChunk: number = 5;
   private chunkRetryCounts: Map<number, number> = new Map();
 
-  constructor(task: DownloadTask) {
+  // Speed throttling state
+  private speedLimitBytesPerSec: number = 0;
+  private windowStartTime: number = Date.now();
+  private windowBytes: number = 0;
+
+  constructor(task: DownloadTask, speedLimitBytesPerSec: number = 0) {
     super();
-    this.task = { ...task };
+    this.task = task;
     this.lastBytesDownloaded = task.downloadedBytes;
+    this.speedLimitBytesPerSec = Math.max(0, speedLimitBytesPerSec || 0);
   }
 
   public getTask(): DownloadTask {
     return this.task;
   }
 
+  public setSpeedLimit(bytesPerSec: number): void {
+    this.speedLimitBytesPerSec = Math.max(0, bytesPerSec || 0);
+    this.windowStartTime = Date.now();
+    this.windowBytes = 0;
+  }
+
+  private applyStreamThrottle(res: http.IncomingMessage, bytesJustReceived: number): void {
+    if (this.speedLimitBytesPerSec <= 0 || this.isPaused || this.isCancelled) {
+      return;
+    }
+
+    const now = Date.now();
+    const elapsedMs = now - this.windowStartTime;
+    if (elapsedMs >= 1000) {
+      this.windowStartTime = now;
+      this.windowBytes = bytesJustReceived;
+      return;
+    }
+
+    this.windowBytes += bytesJustReceived;
+    const expectedMs = (this.windowBytes / this.speedLimitBytesPerSec) * 1000;
+
+    if (expectedMs > elapsedMs + 20) {
+      const delayMs = Math.min(1000, Math.round(expectedMs - elapsedMs));
+      if (!res.isPaused()) {
+        res.pause();
+        const t = setTimeout(() => {
+          this.retryTimers.delete(t);
+          if (!this.isPaused && !this.isCancelled && !res.destroyed) {
+            res.resume();
+          }
+        }, delayMs);
+        this.retryTimers.add(t);
+      }
+    }
+  }
+
   public async start(): Promise<void> {
+    if (this.isPaused || this.isCancelled) return;
     this.isPaused = false;
     this.isCancelled = false;
+    this.windowStartTime = Date.now();
+    this.windowBytes = 0;
     this.task.status = 'downloading';
     this.emit('status-change', this.task);
 
@@ -117,7 +165,7 @@ export class Downloader extends EventEmitter {
   }
 
   private attemptRename(betterName: string): void {
-    if (!betterName || betterName === this.task.fileName) return;
+    if (!betterName || betterName === this.task.fileName || this.isPaused || this.isCancelled) return;
     const saveDir = path.dirname(this.task.savePath);
     let newPath = path.join(saveDir, betterName);
 
@@ -191,7 +239,16 @@ export class Downloader extends EventEmitter {
     };
 
     const req = client.request(reqOptions, (res) => {
+      if (this.isPaused || this.isCancelled) {
+        res.destroy();
+        return;
+      }
+
+      this.activeResponses.set(chunk.id, res);
+
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.destroy();
+        this.activeResponses.delete(chunk.id);
         const nextUrl = new URL(res.headers.location, this.task.url).toString();
         this.task.finalUrl = nextUrl;
         return this.downloadChunk(chunk);
@@ -199,6 +256,7 @@ export class Downloader extends EventEmitter {
 
       if (res.statusCode === 200 && chunk.id > 0) {
         res.destroy();
+        this.activeResponses.delete(chunk.id);
         this.activeRequests.delete(chunk.id);
         this.task.supportsRanges = false;
         return;
@@ -206,6 +264,7 @@ export class Downloader extends EventEmitter {
 
       if (res.statusCode && res.statusCode >= 400) {
         res.destroy();
+        this.activeResponses.delete(chunk.id);
         this.activeRequests.delete(chunk.id);
         this.handleError(
           new Error(`Server returned HTTP ${res.statusCode}: ${res.statusMessage || (res.statusCode === 403 ? 'Access Denied / Protected link' : 'Error')}`)
@@ -214,6 +273,8 @@ export class Downloader extends EventEmitter {
       }
 
       if (res.statusCode !== 200 && res.statusCode !== 206) {
+        res.destroy();
+        this.activeResponses.delete(chunk.id);
         this.retryChunk(chunk, new Error(`Chunk ${chunk.id} received HTTP status ${res.statusCode}`));
         return;
       }
@@ -239,6 +300,7 @@ export class Downloader extends EventEmitter {
           fs.writeSync(this.fd, buffer, 0, buffer.length, writeOffset);
           chunk.downloadedBytes += buffer.length;
           this.task.downloadedBytes += buffer.length;
+          this.applyStreamThrottle(res, buffer.length);
         } catch (err: any) {
           res.destroy();
           this.handleError(err);
@@ -246,24 +308,30 @@ export class Downloader extends EventEmitter {
       });
 
       res.on('end', () => {
+        this.activeResponses.delete(chunk.id);
         this.activeRequests.delete(chunk.id);
+        if (this.isPaused || this.isCancelled) return;
+
         if (chunk.downloadedBytes >= chunk.totalBytes) {
           chunk.status = 'completed';
           this.emit('chunk-complete', chunk);
           this.checkCompletion();
-        } else if (!this.isPaused && !this.isCancelled) {
+        } else {
           this.retryChunk(chunk, new Error('Chunk connection closed prematurely'));
         }
       });
 
       res.on('error', (err) => {
+        this.activeResponses.delete(chunk.id);
         this.activeRequests.delete(chunk.id);
+        if (this.isPaused || this.isCancelled) return;
         this.retryChunk(chunk, err);
       });
     });
 
     req.on('error', (err) => {
       this.activeRequests.delete(chunk.id);
+      if (this.isPaused || this.isCancelled) return;
       this.retryChunk(chunk, err);
     });
 
@@ -294,7 +362,16 @@ export class Downloader extends EventEmitter {
         headers: getRequestHeaders(targetUrl, customHeaders),
       },
       (res) => {
+        if (this.isPaused || this.isCancelled) {
+          res.destroy();
+          return;
+        }
+
+        this.activeResponses.set(0, res);
+
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.destroy();
+          this.activeResponses.delete(0);
           const nextUrl = new URL(res.headers.location, this.task.url).toString();
           this.task.finalUrl = nextUrl;
           return this.downloadSingleStream();
@@ -302,10 +379,17 @@ export class Downloader extends EventEmitter {
 
         if (res.statusCode && res.statusCode >= 400) {
           res.destroy();
+          this.activeResponses.delete(0);
           this.handleError(
             new Error(`Server returned HTTP ${res.statusCode}: ${res.statusMessage || (res.statusCode === 403 ? 'Access Denied / Protected link' : 'Error')}`)
           );
           return;
+        }
+
+        // If server returned 200 OK instead of 206 Partial Content on resume, reset offset
+        if (res.statusCode === 200 && this.task.downloadedBytes > 0) {
+          this.task.downloadedBytes = 0;
+          this.lastBytesDownloaded = 0;
         }
 
         // Read Content-Length if missing
@@ -321,14 +405,13 @@ export class Downloader extends EventEmitter {
           }
         }
 
-        // Try extracting real filename from response headers (e.g. content-disposition or MIME)
+        // Try extracting real filename from response headers
         const mimeType = (res.headers['content-type'] as string) || '';
         const betterName = extractFileNameFromUrl(this.task.finalUrl || this.task.url, res.headers);
         if (betterName && (betterName !== this.task.fileName || !path.extname(this.task.fileName))) {
           this.attemptRename(betterName);
         }
 
-        // Always update category based on real filename and MIME type!
         this.task.category = categorizeFileName(this.task.fileName, mimeType, this.task.finalUrl || this.task.url);
         this.emit('progress', this.task);
 
@@ -348,6 +431,7 @@ export class Downloader extends EventEmitter {
             if (this.task.chunks[0]) {
               this.task.chunks[0].downloadedBytes = this.task.downloadedBytes;
             }
+            this.applyStreamThrottle(res, buffer.length);
           } catch (err: any) {
             res.destroy();
             this.handleError(err);
@@ -355,7 +439,9 @@ export class Downloader extends EventEmitter {
         });
 
         res.on('end', () => {
+          this.activeResponses.delete(0);
           this.activeRequests.delete(0);
+          if (this.isPaused || this.isCancelled) return;
           if (this.task.chunks[0]) {
             this.task.chunks[0].status = 'completed';
           }
@@ -363,12 +449,17 @@ export class Downloader extends EventEmitter {
         });
 
         res.on('error', (err) => {
+          this.activeResponses.delete(0);
+          this.activeRequests.delete(0);
+          if (this.isPaused || this.isCancelled) return;
           this.handleError(err);
         });
       }
     );
 
     req.on('error', (err) => {
+      this.activeRequests.delete(0);
+      if (this.isPaused || this.isCancelled) return;
       this.handleError(err);
     });
 
@@ -384,11 +475,13 @@ export class Downloader extends EventEmitter {
       this.chunkRetryCounts.set(chunk.id, currentRetries + 1);
       chunk.status = 'downloading';
       const delay = Math.min(1000 * Math.pow(2, currentRetries), 10000);
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        this.retryTimers.delete(timer);
         if (!this.isPaused && !this.isCancelled) {
           this.downloadChunk(chunk);
         }
       }, delay);
+      this.retryTimers.add(timer);
     } else {
       chunk.status = 'failed';
       this.handleError(new Error(`Chunk ${chunk.id} failed after ${this.maxRetriesPerChunk} retries: ${err.message}`));
@@ -405,6 +498,7 @@ export class Downloader extends EventEmitter {
   }
 
   private completeDownload(): void {
+    if (this.isPaused || this.isCancelled) return;
     this.stopSpeedTicker();
     this.closeFileDescriptor();
 
@@ -425,12 +519,16 @@ export class Downloader extends EventEmitter {
     this.lastBytesDownloaded = this.task.downloadedBytes;
 
     this.speedTimer = setInterval(() => {
+      if (this.isPaused || this.isCancelled) return;
       const now = Date.now();
       const elapsedSec = (now - this.lastTickTime) / 1000;
       if (elapsedSec <= 0) return;
 
       const bytesDelta = this.task.downloadedBytes - this.lastBytesDownloaded;
-      const currentSpeed = Math.max(0, Math.round(bytesDelta / elapsedSec));
+      const rawSpeed = Math.max(0, Math.round(bytesDelta / elapsedSec));
+      const currentSpeed = this.speedLimitBytesPerSec > 0
+        ? Math.min(rawSpeed, this.speedLimitBytesPerSec)
+        : rawSpeed;
 
       this.task.speed = currentSpeed;
       this.lastBytesDownloaded = this.task.downloadedBytes;
@@ -454,6 +552,10 @@ export class Downloader extends EventEmitter {
       clearInterval(this.speedTimer);
       this.speedTimer = null;
     }
+    for (const timer of this.retryTimers) {
+      clearTimeout(timer);
+    }
+    this.retryTimers.clear();
   }
 
   public pause(): void {
@@ -462,8 +564,19 @@ export class Downloader extends EventEmitter {
     this.isPaused = true;
     this.stopSpeedTicker();
 
+    for (const [, res] of this.activeResponses.entries()) {
+      try {
+        res.removeAllListeners('data');
+        res.removeAllListeners('end');
+        res.removeAllListeners('error');
+        res.destroy();
+      } catch {}
+    }
+    this.activeResponses.clear();
+
     for (const [, req] of this.activeRequests.entries()) {
       try {
+        req.removeAllListeners('error');
         req.destroy();
       } catch {}
     }
@@ -488,8 +601,17 @@ export class Downloader extends EventEmitter {
     this.isCancelled = true;
     this.stopSpeedTicker();
 
+    for (const [, res] of this.activeResponses.entries()) {
+      try {
+        res.removeAllListeners();
+        res.destroy();
+      } catch {}
+    }
+    this.activeResponses.clear();
+
     for (const [, req] of this.activeRequests.entries()) {
       try {
+        req.removeAllListeners();
         req.destroy();
       } catch {}
     }
@@ -510,6 +632,7 @@ export class Downloader extends EventEmitter {
   }
 
   private handleError(err: Error): void {
+    if (this.isPaused || this.isCancelled) return;
     this.stopSpeedTicker();
     this.closeFileDescriptor();
 

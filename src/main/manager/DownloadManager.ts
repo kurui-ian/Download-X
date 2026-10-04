@@ -35,12 +35,14 @@ export class DownloadManager {
 
   constructor(store: PersistenceStore) {
     this.store = store;
+    const settings = this.store.getSettings();
+    TorrentEngine.getInstance().setSpeedLimit(settings.speedLimitBytesPerSec || 0);
+
     const loadedTasks = this.store.getTasks();
     for (const t of loadedTasks) {
       if (t.url && TorrentEngine.getInstance().isTorrentSource(t.url)) {
         t.protocol = 'torrent';
       }
-      // Ensure category is accurately categorized for legacy/saved tasks
       if (!t.category || t.category === 'other' || t.category === 'all') {
         t.category = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, '', t.finalUrl || t.url);
       }
@@ -94,6 +96,22 @@ export class DownloadManager {
     this.mainWindow = window;
   }
 
+  public applySpeedLimit(bytesPerSec: number): void {
+    const limit = Math.max(0, bytesPerSec || 0);
+    TorrentEngine.getInstance().setSpeedLimit(limit);
+    this.rebalanceHttpSpeedLimits(limit);
+  }
+
+  private rebalanceHttpSpeedLimits(overrideLimit?: number): void {
+    const settings = this.store.getSettings();
+    const limit = overrideLimit !== undefined ? overrideLimit : (settings.speedLimitBytesPerSec || 0);
+    const activeHttpCount = this.downloaders.size;
+    const perTaskLimit = limit > 0 && activeHttpCount > 0 ? Math.floor(limit / activeHttpCount) : limit;
+    for (const downloader of this.downloaders.values()) {
+      downloader.setSpeedLimit(perTaskLimit);
+    }
+  }
+
   public getTasks(): DownloadTask[] {
     return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -141,7 +159,7 @@ export class DownloadManager {
     let initialFileName = params.fileName ? sanitizeFileName(params.fileName) : '';
     if (!initialFileName) {
       if (isTorrent) {
-        let dnMatch = cleanUrl.match(/dn=([^&]+)/i);
+        const dnMatch = cleanUrl.match(/dn=([^&]+)/i);
         if (dnMatch) {
           initialFileName = sanitizeFileName(decodeURIComponent(dnMatch[1].replace(/\+/g, ' ')));
         } else if (cleanUrl.toLowerCase().endsWith('.torrent')) {
@@ -192,7 +210,7 @@ export class DownloadManager {
       savePath: finalPath,
       fileSize: 0,
       downloadedBytes: 0,
-      status: 'connecting',
+      status: params.autoStart !== false ? 'connecting' : 'paused',
       category: initialCategory,
       supportsRanges: isTorrent ? true : false,
       threadCount: isTorrent ? 1 : 1,
@@ -213,6 +231,12 @@ export class DownloadManager {
     (async () => {
       try {
         const inspection = await inspectUrl(cleanUrl);
+        // Check if user paused or deleted the task while inspection was in flight
+        const currentTask = this.tasks.get(task.id);
+        if (!currentTask || currentTask.status === 'paused' || currentTask.status === 'cancelled') {
+          return;
+        }
+
         task.finalUrl = inspection.finalUrl;
         task.fileSize = inspection.fileSize;
         task.supportsRanges = inspection.supportsRanges;
@@ -248,16 +272,22 @@ export class DownloadManager {
           }
         }
 
-        task.status = params.autoStart !== false ? 'queued' : 'paused';
+        if (task.status !== 'paused' && task.status !== 'cancelled') {
+          task.status = params.autoStart !== false ? 'queued' : 'paused';
+        }
       } catch (err: any) {
         console.warn('URL inspection warning (will still attempt download):', err.message);
-        task.status = params.autoStart !== false ? 'queued' : 'paused';
+        if (task.status !== 'paused' && task.status !== 'cancelled') {
+          task.status = params.autoStart !== false ? 'queued' : 'paused';
+        }
       }
+
+      if (!this.tasks.has(task.id)) return;
 
       this.scheduleSave();
       this.broadcastTasks();
 
-      if (params.autoStart !== false) {
+      if (task.status === 'queued' && params.autoStart !== false) {
         this.processQueue();
       }
     })();
@@ -267,25 +297,31 @@ export class DownloadManager {
 
   public pauseDownload(id: string): void {
     const task = this.tasks.get(id);
-    if (task && task.protocol === 'torrent') {
-      TorrentEngine.getInstance().pauseTorrent(id);
-    } else {
-      const downloader = this.downloaders.get(id);
-      if (downloader) {
-        downloader.pause();
-        this.downloaders.delete(id);
-      }
+    if (!task || task.status === 'completed') return;
+
+    // Immediately mark paused so any in-flight callbacks see 'paused'
+    task.status = 'paused';
+    task.speed = 0;
+    task.uploadSpeed = 0;
+    task.eta = 0;
+
+    if (task.protocol === 'torrent' || TorrentEngine.getInstance().isTorrentSource(task.url)) {
+      TorrentEngine.getInstance().pauseTorrent(id, task.infoHash);
     }
 
-    if (task && task.status !== 'completed') {
-      task.status = 'paused';
-      task.speed = 0;
-      task.uploadSpeed = 0;
-      task.eta = 0;
-      this.scheduleSave();
-      this.broadcastTasks();
+    const downloader = this.downloaders.get(id);
+    if (downloader) {
+      downloader.pause();
+      this.downloaders.delete(id);
+      this.rebalanceHttpSpeedLimits();
     }
 
+    task.status = 'paused';
+    task.speed = 0;
+    task.uploadSpeed = 0;
+    task.eta = 0;
+    this.scheduleSave();
+    this.broadcastTasks();
     this.processQueue();
   }
 
@@ -294,6 +330,7 @@ export class DownloadManager {
     if (!task || task.status === 'completed') return;
 
     task.status = 'queued';
+    task.errorMessage = undefined;
     this.scheduleSave();
     this.broadcastTasks();
     this.processQueue();
@@ -301,30 +338,35 @@ export class DownloadManager {
 
   public cancelDownload(id: string, deleteFile: boolean = false): void {
     const task = this.tasks.get(id);
-    if (task && task.protocol === 'torrent') {
-      TorrentEngine.getInstance().cancelTorrent(id, deleteFile);
-    } else {
-      const downloader = this.downloaders.get(id);
-      if (downloader) {
-        downloader.cancel(deleteFile);
-        this.downloaders.delete(id);
-      } else if (deleteFile) {
-        if (task && fs.existsSync(task.savePath)) {
-          try {
-            fs.unlinkSync(task.savePath);
-          } catch {}
-        }
-      }
-    }
-
     if (task) {
       task.status = 'cancelled';
       task.speed = 0;
       task.uploadSpeed = 0;
-      this.scheduleSave();
-      this.broadcastTasks();
+      task.eta = 0;
     }
 
+    if (task && (task.protocol === 'torrent' || TorrentEngine.getInstance().isTorrentSource(task.url))) {
+      TorrentEngine.getInstance().cancelTorrent(id, deleteFile, task.infoHash);
+    }
+
+    const downloader = this.downloaders.get(id);
+    if (downloader) {
+      downloader.cancel(deleteFile);
+      this.downloaders.delete(id);
+      this.rebalanceHttpSpeedLimits();
+    } else if (deleteFile && task && fs.existsSync(task.savePath)) {
+      try {
+        const stat = fs.statSync(task.savePath);
+        if (stat.isDirectory()) {
+          fs.rmSync(task.savePath, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(task.savePath);
+        }
+      } catch {}
+    }
+
+    this.scheduleSave();
+    this.broadcastTasks();
     this.processQueue();
   }
 
@@ -337,13 +379,13 @@ export class DownloadManager {
   }
 
   public pauseAll(): void {
-    for (const [id] of this.downloaders.entries()) {
+    for (const [id] of [...this.downloaders.entries()]) {
       this.pauseDownload(id);
     }
     for (const task of this.tasks.values()) {
-      if (task.status === 'downloading' || task.status === 'queued') {
-        if (task.protocol === 'torrent') {
-          TorrentEngine.getInstance().pauseTorrent(task.id);
+      if (task.status === 'downloading' || task.status === 'queued' || task.status === 'connecting') {
+        if (task.protocol === 'torrent' || TorrentEngine.getInstance().isTorrentSource(task.url)) {
+          TorrentEngine.getInstance().pauseTorrent(task.id, task.infoHash);
         }
         task.status = 'paused';
         task.speed = 0;
@@ -359,6 +401,7 @@ export class DownloadManager {
     for (const task of this.tasks.values()) {
       if (task.status === 'paused' || task.status === 'error') {
         task.status = 'queued';
+        task.errorMessage = undefined;
       }
     }
     this.scheduleSave();
@@ -417,10 +460,19 @@ export class DownloadManager {
   }
 
   private startDownloader(task: DownloadTask): void {
-    if (task.protocol === 'torrent') {
+    if (task.status === 'paused' || task.status === 'cancelled') {
+      return;
+    }
+
+    if (task.protocol === 'torrent' || TorrentEngine.getInstance().isTorrentSource(task.url)) {
+      task.protocol = 'torrent';
       TorrentEngine.getInstance().startTorrent(
         task,
         (updatedTask) => {
+          const existing = this.tasks.get(updatedTask.id);
+          if (!existing || existing.status === 'paused' || existing.status === 'cancelled') {
+            return;
+          }
           this.tasks.set(updatedTask.id, updatedTask);
           this.broadcastTasksThrottled();
         },
@@ -441,6 +493,10 @@ export class DownloadManager {
           this.processQueue();
         },
         (_err, errorTask) => {
+          const existing = this.tasks.get(errorTask.id);
+          if (!existing || existing.status === 'paused' || existing.status === 'cancelled') {
+            return;
+          }
           this.tasks.set(errorTask.id, errorTask);
           this.scheduleSave();
           this.broadcastTasks();
@@ -454,23 +510,29 @@ export class DownloadManager {
       return;
     }
 
-    const downloader = new Downloader(task);
+    const settings = this.store.getSettings();
+    const downloader = new Downloader(task, settings.speedLimitBytesPerSec || 0);
     this.downloaders.set(task.id, downloader);
+    this.rebalanceHttpSpeedLimits();
 
     downloader.on('progress', (updatedTask: DownloadTask) => {
+      const existing = this.tasks.get(updatedTask.id);
+      if (!existing || existing.status === 'paused' || existing.status === 'cancelled') {
+        return;
+      }
       this.tasks.set(updatedTask.id, updatedTask);
       this.broadcastTasksThrottled();
     });
 
     downloader.on('completed', (completedTask: DownloadTask) => {
       this.downloaders.delete(completedTask.id);
+      this.rebalanceHttpSpeedLimits();
       this.tasks.set(completedTask.id, completedTask);
       this.scheduleSave();
       this.broadcastTasks();
 
-      // Show native desktop notification
-      const settings = this.store.getSettings();
-      if (settings.enableNotifications && Notification.isSupported()) {
+      const currentSettings = this.store.getSettings();
+      if (currentSettings.enableNotifications && Notification.isSupported()) {
         new Notification({
           title: 'Download Complete',
           body: `${completedTask.fileName} has finished downloading.`,
@@ -483,6 +545,11 @@ export class DownloadManager {
 
     downloader.on('error', (_err, errorTask: DownloadTask) => {
       this.downloaders.delete(errorTask.id);
+      this.rebalanceHttpSpeedLimits();
+      const existing = this.tasks.get(errorTask.id);
+      if (!existing || existing.status === 'paused' || existing.status === 'cancelled') {
+        return;
+      }
       this.tasks.set(errorTask.id, errorTask);
       this.scheduleSave();
       this.broadcastTasks();
@@ -491,6 +558,7 @@ export class DownloadManager {
 
     downloader.on('paused', (pausedTask: DownloadTask) => {
       this.downloaders.delete(pausedTask.id);
+      this.rebalanceHttpSpeedLimits();
       this.tasks.set(pausedTask.id, pausedTask);
       this.scheduleSave();
       this.broadcastTasks();
@@ -515,7 +583,7 @@ export class DownloadManager {
     const stats: GlobalSpeedStats = {
       totalSpeed: taskList.reduce((acc, t) => acc + (t.status === 'downloading' ? t.speed : 0), 0),
       totalUploadSpeed: taskList.reduce((acc, t) => acc + (t.status === 'downloading' ? (t.uploadSpeed || 0) : 0), 0),
-      activeCount: taskList.filter((t) => t.status === 'downloading').length,
+      activeCount: taskList.filter((t) => t.status === 'downloading' || t.status === 'connecting').length,
       queuedCount: taskList.filter((t) => t.status === 'queued').length,
       completedCount: taskList.filter((t) => t.status === 'completed').length,
     };

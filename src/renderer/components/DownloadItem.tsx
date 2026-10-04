@@ -40,11 +40,13 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
   const categoryInfo = getCategoryBadge(task.category);
   const CategoryIcon = categoryInfo.icon;
 
+  const isConnecting = task.status === 'connecting';
   const isDownloading = task.status === 'downloading';
   const isCompleted = task.status === 'completed';
   const isPaused = task.status === 'paused';
   const isError = task.status === 'error';
   const isQueued = task.status === 'queued';
+  const canPause = isDownloading || isConnecting || isQueued;
 
   // Automatically fetch file thumbnail / cover photo once completed
   useEffect(() => {
@@ -108,13 +110,13 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
                 <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 font-medium">
                   <FileCheck className="w-3 h-3" /> Done
                 </span>
-              ) : isDownloading ? (
+              ) : isDownloading || isConnecting ? (
                 <span className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
                   <span className="relative flex h-1.5 w-1.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-zinc-900 dark:bg-zinc-100 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-zinc-900 dark:bg-zinc-100"></span>
                   </span>
-                  Downloading
+                  {isConnecting ? 'Connecting' : 'Downloading'}
                 </span>
               ) : isPaused ? (
                 <span className="inline-flex items-center text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400">
@@ -168,7 +170,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
             </div>
 
             <div className="flex items-center gap-2.5">
-              {isDownloading && (
+              {(isDownloading || isConnecting) && (
                 <>
                   <div className="flex items-center gap-1 font-semibold text-zinc-900 dark:text-zinc-100">
                     <span className="inline-block animate-download-bounce">↓</span>
@@ -207,7 +209,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
             >
               <RotateCcw className="w-4 h-4" />
             </button>
-          ) : isDownloading ? (
+          ) : canPause ? (
             <button
               onClick={() => onPause(task.id)}
               className="p-1.5 text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"

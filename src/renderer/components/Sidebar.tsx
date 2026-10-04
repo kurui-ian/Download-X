@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Download, 
   PlayCircle, 
@@ -14,7 +14,8 @@ import {
   Terminal,
   Settings,
   Activity,
-  Radio
+  Radio,
+  Gauge
 } from 'lucide-react';
 import { TaskCategory, TaskStatus, GlobalSpeedStats, DownloadTask } from '../types';
 import { formatSpeed } from '../utils/formatters';
@@ -26,8 +27,19 @@ interface SidebarProps {
   onSelectCategory: (category: TaskCategory) => void;
   tasks: DownloadTask[];
   speedStats: GlobalSpeedStats;
+  speedLimitBytesPerSec: number;
+  onUpdateSpeedLimit: (bytesPerSec: number) => void;
   onOpenSettings: () => void;
 }
+
+const SPEED_PRESETS = [
+  { label: '∞', title: 'Unlimited', mbps: 0 },
+  { label: '0.5M', title: '0.5 MB/s', mbps: 0.5 },
+  { label: '1M', title: '1 MB/s', mbps: 1 },
+  { label: '2M', title: '2 MB/s', mbps: 2 },
+  { label: '5M', title: '5 MB/s', mbps: 5 },
+  { label: '10M', title: '10 MB/s', mbps: 10 },
+];
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentStatus,
@@ -36,11 +48,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectCategory,
   tasks,
   speedStats,
+  speedLimitBytesPerSec,
+  onUpdateSpeedLimit,
   onOpenSettings,
 }) => {
+  const currentLimitMb = speedLimitBytesPerSec > 0
+    ? Number((speedLimitBytesPerSec / (1024 * 1024)).toFixed(2))
+    : 0;
+
+  const [customMbInput, setCustomMbInput] = useState<string>(
+    currentLimitMb > 0 ? String(currentLimitMb) : ''
+  );
+
+  useEffect(() => {
+    const mb = speedLimitBytesPerSec > 0
+      ? Number((speedLimitBytesPerSec / (1024 * 1024)).toFixed(2))
+      : 0;
+    setCustomMbInput(mb > 0 ? String(mb) : '');
+  }, [speedLimitBytesPerSec]);
+
+  const handleApplyCustomMb = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseFloat(customMbInput);
+    if (!isNaN(parsed) && parsed > 0) {
+      onUpdateSpeedLimit(Math.round(parsed * 1024 * 1024));
+    } else {
+      onUpdateSpeedLimit(0);
+      setCustomMbInput('');
+    }
+  };
+
   const statusCounts = {
     all: tasks.length,
-    downloading: tasks.filter((t) => t.status === 'downloading').length,
+    downloading: tasks.filter((t) => t.status === 'downloading' || t.status === 'connecting').length,
     queued: tasks.filter((t) => t.status === 'queued').length,
     completed: tasks.filter((t) => t.status === 'completed').length,
     paused: tasks.filter((t) => t.status === 'paused').length,
@@ -79,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className="w-60 bg-zinc-50/80 dark:bg-black border-r border-zinc-200 dark:border-zinc-800/80 flex flex-col justify-between h-full select-none transition-colors">
-      <div className="flex flex-col flex-1 overflow-y-auto p-3.5 space-y-5">
+      <div className="flex flex-col flex-1 overflow-y-auto p-3.5 space-y-4">
         {/* Minimalist Monochrome Brand Header */}
         <div className="flex items-center gap-2.5 px-2 py-1">
           <div className="w-8 h-8 rounded-lg bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-sm">
@@ -93,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Status Navigation */}
         <div>
-          <div className="text-[10px] font-mono font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 mb-1.5">
+          <div className="text-[10px] font-mono font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 mb-1">
             Status
           </div>
           <nav className="space-y-0.5">
@@ -133,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Categories Navigation */}
         <div>
-          <div className="text-[10px] font-mono font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 mb-1.5">
+          <div className="text-[10px] font-mono font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 mb-1">
             Categories
           </div>
           <nav className="space-y-0.5">
@@ -173,21 +213,97 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Footer / Speed Meter & Settings */}
+      {/* Footer / Speed Meter, Speed Limiter & Settings */}
       <div className="p-3 border-t border-zinc-200 dark:border-zinc-800/80 bg-zinc-100/50 dark:bg-zinc-950 space-y-2">
-        {/* Speed meter card */}
-        <div className="p-2.5 bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 shadow-sm">
-          <div className="flex items-center justify-between text-[11px] text-zinc-500 mb-0.5">
-            <span className="flex items-center gap-1 font-mono">
-              <Activity className="w-3 h-3 text-zinc-700 dark:text-zinc-300" />
-              <span>Speed</span>
-            </span>
-            <span className="text-[10px] font-mono text-zinc-400">
-              {speedStats.activeCount} active
+        {/* Speed Meter & Speed Limiter Card */}
+        <div className="p-2.5 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-1 text-[10px] font-mono text-zinc-500">
+                <Activity className="w-3 h-3 text-zinc-700 dark:text-zinc-300" />
+                <span>Speed ({speedStats.activeCount} active)</span>
+              </div>
+              <div className="font-mono text-sm font-bold text-zinc-900 dark:text-white tracking-tight">
+                {formatSpeed(speedStats.totalSpeed)}
+              </div>
+            </div>
+
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700">
+              {currentLimitMb > 0 ? `Cap: ${currentLimitMb} MB/s` : 'Unlimited'}
             </span>
           </div>
-          <div className="font-mono text-sm font-bold text-zinc-900 dark:text-white tracking-tight">
-            {formatSpeed(speedStats.totalSpeed)}
+
+          {/* Speed Limiter Section */}
+          <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/80 space-y-1.5">
+            <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+              <span className="flex items-center gap-1">
+                <Gauge className="w-3 h-3" />
+                <span>Speed Limit</span>
+              </span>
+              {currentLimitMb > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onUpdateSpeedLimit(0);
+                    setCustomMbInput('');
+                  }}
+                  className="text-[10px] text-zinc-500 hover:text-black dark:hover:text-white underline"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* Preset Speed Cap Buttons */}
+            <div className="grid grid-cols-6 gap-1">
+              {SPEED_PRESETS.map((preset) => {
+                const isSelected = preset.mbps === 0
+                  ? currentLimitMb === 0
+                  : Math.abs(currentLimitMb - preset.mbps) < 0.01;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    title={preset.title}
+                    onClick={() => {
+                      onUpdateSpeedLimit(preset.mbps > 0 ? Math.round(preset.mbps * 1024 * 1024) : 0);
+                      setCustomMbInput(preset.mbps > 0 ? String(preset.mbps) : '');
+                    }}
+                    className={`py-1 rounded text-[10px] font-mono font-medium transition-all ${
+                      isSelected
+                        ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-black dark:hover:text-white'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom MB/s Input */}
+            <form onSubmit={handleApplyCustomMb} className="flex items-center gap-1">
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={customMbInput}
+                  onChange={(e) => setCustomMbInput(e.target.value)}
+                  placeholder="Custom (e.g. 1)"
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-md pl-2 pr-8 py-1 text-[11px] font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none"
+                />
+                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-mono text-zinc-400 pointer-events-none">
+                  MB/s
+                </span>
+              </div>
+              <button
+                type="submit"
+                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black rounded-md text-[10px] font-mono font-medium hover:opacity-90 transition-opacity"
+              >
+                Set
+              </button>
+            </form>
           </div>
         </div>
 

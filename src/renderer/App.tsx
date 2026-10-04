@@ -160,8 +160,12 @@ export const App: React.FC = () => {
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
       // Status filter
-      if (statusFilter !== 'all' && task.status !== statusFilter) {
-        return false;
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'downloading') {
+          if (task.status !== 'downloading' && task.status !== 'connecting') return false;
+        } else if (task.status !== statusFilter) {
+          return false;
+        }
       }
 
       // Category filter
@@ -201,10 +205,20 @@ export const App: React.FC = () => {
 
   // Task Actions
   const handlePause = async (id: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id ? { ...t, status: 'paused', speed: 0, uploadSpeed: 0, eta: 0 } : t
+      )
+    );
     await window.electronAPI.pauseDownload(id);
   };
 
   const handleResume = async (id: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id ? { ...t, status: 'queued', errorMessage: undefined } : t
+      )
+    );
     await window.electronAPI.resumeDownload(id);
   };
 
@@ -221,6 +235,13 @@ export const App: React.FC = () => {
   };
 
   const handlePauseAll = async () => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.status === 'downloading' || t.status === 'connecting' || t.status === 'queued'
+          ? { ...t, status: 'paused', speed: 0, uploadSpeed: 0, eta: 0 }
+          : t
+      )
+    );
     await window.electronAPI.pauseAll();
   };
 
@@ -244,8 +265,17 @@ export const App: React.FC = () => {
   };
 
   const handleSaveSettings = async (newSettings: AppSettings) => {
-    await window.electronAPI.saveSettings(newSettings);
     setSettings(newSettings);
+    await window.electronAPI.saveSettings(newSettings);
+  };
+
+  const handleUpdateSpeedLimit = async (bytesPerSec: number) => {
+    const updatedSettings: AppSettings = {
+      ...settings,
+      speedLimitBytesPerSec: bytesPerSec,
+    };
+    setSettings(updatedSettings);
+    await window.electronAPI.saveSettings(updatedSettings);
   };
 
   return (
@@ -258,6 +288,8 @@ export const App: React.FC = () => {
         onSelectCategory={handleSelectCategory}
         tasks={tasks}
         speedStats={speedStats}
+        speedLimitBytesPerSec={settings.speedLimitBytesPerSec}
+        onUpdateSpeedLimit={handleUpdateSpeedLimit}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
 

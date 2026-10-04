@@ -9,6 +9,8 @@ export class TorrentEngine extends EventEmitter {
   private client: any = null;
   private isInitializing: Promise<any> | null = null;
   private activeTorrents: Map<string, any> = new Map(); // taskId -> Torrent instance
+  private pausedTasks: Set<string> = new Set(); // taskIds that are explicitly paused
+  private speedLimitBytesPerSec: number = 0; // 0 = unlimited
   private parseTorrentFn: any = null;
   private WebTorrentClass: any = null;
 
@@ -21,6 +23,17 @@ export class TorrentEngine extends EventEmitter {
 
   private constructor() {
     super();
+  }
+
+  public setSpeedLimit(bytesPerSec: number): void {
+    this.speedLimitBytesPerSec = Math.max(0, bytesPerSec || 0);
+    if (this.client && typeof this.client.throttleDownload === 'function') {
+      try {
+        this.client.throttleDownload(this.speedLimitBytesPerSec > 0 ? this.speedLimitBytesPerSec : -1);
+      } catch (err) {
+        console.warn('Failed to set WebTorrent download speed limit:', err);
+      }
+    }
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -41,6 +54,7 @@ export class TorrentEngine extends EventEmitter {
           maxConns: 60,
           dht: true,
           webSeeds: true,
+          downloadLimit: this.speedLimitBytesPerSec > 0 ? this.speedLimitBytesPerSec : -1,
         });
 
         this.client.on('error', (err: any) => {
@@ -101,10 +115,10 @@ export class TorrentEngine extends EventEmitter {
       };
     } catch (err: any) {
       // If parsing failed (e.g. minimal magnet link with DHT only)
-      let infoHashMatch = source.match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
+      const infoHashMatch = source.match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
       const infoHash = infoHashMatch ? infoHashMatch[1].toLowerCase() : '';
-      let dnMatch = source.match(/dn=([^&]+)/i);
-      let dn = dnMatch ? decodeURIComponent(dnMatch[1].replace(/\+/g, ' ')) : '';
+      const dnMatch = source.match(/dn=([^&]+)/i);
+      const dn = dnMatch ? decodeURIComponent(dnMatch[1].replace(/\+/g, ' ')) : '';
       const fallbackName = dn ? sanitizeFileName(dn) : (infoHash ? `Torrent_${infoHash.substring(0, 8)}` : 'Torrent Download');
 
       return {
@@ -122,18 +136,53 @@ export class TorrentEngine extends EventEmitter {
     }
   }
 
+  private removeExistingClientTorrent(torrentSource: any, infoHash?: string): void {
+    if (!this.client || !Array.isArray(this.client.torrents)) return;
+    const targetHash = infoHash?.toLowerCase();
+    const matchFromMagnet = typeof torrentSource === 'string'
+      ? torrentSource.match(/xt=urn:btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()
+      : undefined;
+    const hashToFind = targetHash || matchFromMagnet;
+
+    for (const t of [...this.client.torrents]) {
+      if (hashToFind && t.infoHash && t.infoHash.toLowerCase() === hashToFind) {
+        try {
+          t.removeAllListeners();
+          t.destroy({ destroyStore: false });
+        } catch {}
+      }
+    }
+  }
+
+  private isStopped(task: DownloadTask): boolean {
+    return this.pausedTasks.has(task.id) || (task.status as string) === 'paused' || (task.status as string) === 'cancelled';
+  }
+
   public async startTorrent(
     task: DownloadTask,
     onProgress: (task: DownloadTask) => void,
     onCompleted: (task: DownloadTask) => void,
     onError: (err: Error, task: DownloadTask) => void
   ): Promise<void> {
+    this.pausedTasks.delete(task.id);
     await this.ensureInitialized();
 
-    if (this.activeTorrents.has(task.id)) {
+    // Check if task was paused or cancelled while waiting for initialization
+    if (this.isStopped(task)) {
       return;
     }
 
+    // If an active torrent instance already exists for this taskId, clean it up first
+    if (this.activeTorrents.has(task.id)) {
+      const prev = this.activeTorrents.get(task.id);
+      try {
+        prev.removeAllListeners();
+        prev.destroy({ destroyStore: false });
+      } catch {}
+      this.activeTorrents.delete(task.id);
+    }
+
+    // Save directory: if task.savePath is a file/folder path inside downloads dir, use its parent directory
     const saveDir = path.dirname(task.savePath);
     if (!fs.existsSync(saveDir)) {
       try {
@@ -146,12 +195,31 @@ export class TorrentEngine extends EventEmitter {
       torrentSource = fs.readFileSync(task.url);
     }
 
+    // Ensure no duplicate torrent in WebTorrent client before adding
+    this.removeExistingClientTorrent(torrentSource, task.infoHash);
+
     try {
       task.status = 'connecting';
       task.protocol = 'torrent';
       onProgress(task);
 
+      // Apply current speed limit to client
+      if (typeof this.client.throttleDownload === 'function') {
+        try {
+          this.client.throttleDownload(this.speedLimitBytesPerSec > 0 ? this.speedLimitBytesPerSec : -1);
+        } catch {}
+      }
+
       const torrent = this.client.add(torrentSource, { path: saveDir }, (t: any) => {
+        if (this.isStopped(task)) {
+          try {
+            t.removeAllListeners();
+            t.destroy({ destroyStore: false });
+          } catch {}
+          this.activeTorrents.delete(task.id);
+          return;
+        }
+
         // Metadata resolved!
         task.status = 'downloading';
         task.fileName = t.name ? sanitizeFileName(t.name) : task.fileName;
@@ -174,6 +242,9 @@ export class TorrentEngine extends EventEmitter {
 
       let lastProgressBroadcast = 0;
       const throttleProgress = () => {
+        if (this.isStopped(task)) {
+          return;
+        }
         const now = Date.now();
         if (now - lastProgressBroadcast > 350) {
           lastProgressBroadcast = now;
@@ -182,23 +253,34 @@ export class TorrentEngine extends EventEmitter {
       };
 
       torrent.on('download', () => {
+        if (this.isStopped(task)) {
+          return;
+        }
         task.status = 'downloading';
         task.downloadedBytes = torrent.downloaded;
-        task.speed = torrent.downloadSpeed;
-        task.uploadSpeed = torrent.uploadSpeed;
+        const rawSpeed = torrent.downloadSpeed || 0;
+        task.speed = this.speedLimitBytesPerSec > 0 ? Math.min(rawSpeed, this.speedLimitBytesPerSec) : rawSpeed;
+        task.uploadSpeed = torrent.uploadSpeed || 0;
         task.peers = torrent.numPeers;
-        task.progress = Math.min(100, Math.round(torrent.progress * 1000) / 10);
-        task.eta = torrent.timeRemaining ? Math.round(torrent.timeRemaining / 1000) : 0;
+        task.progress = Math.min(100, Math.round((torrent.progress || 0) * 1000) / 10);
+        const remainingBytes = Math.max(0, (torrent.length || task.fileSize || 0) - torrent.downloaded);
+        task.eta = task.speed > 0 ? Math.round(remainingBytes / task.speed) : 0;
         throttleProgress();
       });
 
       torrent.on('upload', () => {
+        if (this.isStopped(task)) {
+          return;
+        }
         task.uploadSpeed = torrent.uploadSpeed;
         task.uploadedBytes = torrent.uploaded;
         throttleProgress();
       });
 
       torrent.on('done', () => {
+        if (this.isStopped(task)) {
+          return;
+        }
         task.status = 'completed';
         task.downloadedBytes = torrent.length || task.downloadedBytes;
         task.speed = 0;
@@ -212,6 +294,9 @@ export class TorrentEngine extends EventEmitter {
       });
 
       torrent.on('error', (err: any) => {
+        if (this.isStopped(task)) {
+          return;
+        }
         task.status = 'error';
         task.errorMessage = err.message || 'Torrent download error';
         task.speed = 0;
@@ -219,6 +304,9 @@ export class TorrentEngine extends EventEmitter {
         onError(err, task);
       });
     } catch (err: any) {
+      if (this.isStopped(task)) {
+        return;
+      }
       task.status = 'error';
       task.errorMessage = err.message || 'Failed to add torrent';
       this.activeTorrents.delete(task.id);
@@ -226,23 +314,53 @@ export class TorrentEngine extends EventEmitter {
     }
   }
 
-  public pauseTorrent(taskId: string): void {
+  public pauseTorrent(taskId: string, infoHash?: string): void {
+    this.pausedTasks.add(taskId);
     const torrent = this.activeTorrents.get(taskId);
     if (torrent) {
       try {
+        torrent.removeAllListeners('download');
+        torrent.removeAllListeners('upload');
+        torrent.removeAllListeners('done');
+        torrent.removeAllListeners('error');
+        if (Array.isArray(torrent.files)) {
+          torrent.files.forEach((f: any) => {
+            try { f.deselect(); } catch {}
+          });
+        }
         torrent.pause();
+        // Destroy peer connections and remove from client while preserving downloaded files on disk
+        torrent.destroy({ destroyStore: false });
       } catch {}
       this.activeTorrents.delete(taskId);
     }
+
+    if (infoHash) {
+      this.removeExistingClientTorrent(null, infoHash);
+    }
   }
 
-  public cancelTorrent(taskId: string, deleteFiles: boolean = false): void {
+  public cancelTorrent(taskId: string, deleteFiles: boolean = false, infoHash?: string): void {
+    this.pausedTasks.add(taskId);
     const torrent = this.activeTorrents.get(taskId);
     if (torrent) {
       try {
+        torrent.removeAllListeners('download');
+        torrent.removeAllListeners('upload');
+        torrent.removeAllListeners('done');
+        torrent.removeAllListeners('error');
         torrent.destroy({ destroyStore: deleteFiles });
       } catch {}
       this.activeTorrents.delete(taskId);
+    } else if (infoHash && this.client && Array.isArray(this.client.torrents)) {
+      for (const t of [...this.client.torrents]) {
+        if (t.infoHash && t.infoHash.toLowerCase() === infoHash.toLowerCase()) {
+          try {
+            t.removeAllListeners();
+            t.destroy({ destroyStore: deleteFiles });
+          } catch {}
+        }
+      }
     }
   }
 

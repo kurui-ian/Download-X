@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, Folder, Save, Bell, Minimize2, Sun, Moon, Laptop } from 'lucide-react';
+import { X, Settings, Folder, Save, Bell, Minimize2, Sun, Moon, Laptop, Gauge } from 'lucide-react';
 import { AppSettings } from '../types';
 import { ThemeMode } from '../utils/theme';
 
@@ -12,6 +12,15 @@ interface SettingsModalProps {
   onThemeChange: (theme: ThemeMode) => void;
 }
 
+const SPEED_CAP_PRESETS = [
+  { label: 'Unlimited', mbps: 0 },
+  { label: '0.5 MB/s', mbps: 0.5 },
+  { label: '1 MB/s', mbps: 1 },
+  { label: '2 MB/s', mbps: 2 },
+  { label: '5 MB/s', mbps: 5 },
+  { label: '10 MB/s', mbps: 10 },
+];
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -21,9 +30,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onThemeChange,
 }) => {
   const [formData, setFormData] = useState<AppSettings>(settings);
+  const [customMbStr, setCustomMbStr] = useState<string>('');
 
   useEffect(() => {
     setFormData(settings);
+    const mb = settings.speedLimitBytesPerSec > 0
+      ? Number((settings.speedLimitBytesPerSec / (1024 * 1024)).toFixed(2))
+      : 0;
+    setCustomMbStr(mb > 0 ? String(mb) : '');
   }, [settings, isOpen]);
 
   const handleBrowseDir = async () => {
@@ -37,6 +51,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleCustomMbChange = (val: string) => {
+    setCustomMbStr(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed) && parsed > 0) {
+      setFormData((prev) => ({
+        ...prev,
+        speedLimitBytesPerSec: Math.round(parsed * 1024 * 1024),
+      }));
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        speedLimitBytesPerSec: 0,
+      }));
+    }
+  };
+
+  const handleSelectPreset = (mbps: number) => {
+    setCustomMbStr(mbps > 0 ? String(mbps) : '');
+    setFormData((prev) => ({
+      ...prev,
+      speedLimitBytesPerSec: mbps > 0 ? Math.round(mbps * 1024 * 1024) : 0,
+    }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(formData);
@@ -45,13 +83,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
+  const currentLimitMb = formData.speedLimitBytesPerSec > 0
+    ? Number((formData.speedLimitBytesPerSec / (1024 * 1024)).toFixed(2))
+    : 0;
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 transition-colors">
       <div 
-        className="w-full max-w-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl overflow-hidden transition-colors"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950 sticky top-0 z-10">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-sm">
               <Settings className="w-4 h-4" />
@@ -111,6 +153,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Moon className="w-3.5 h-3.5" />
                 <span>Dark</span>
               </button>
+            </div>
+          </div>
+
+          {/* Download Speed Limit Section */}
+          <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                <Gauge className="w-3.5 h-3.5" />
+                <span>Download Speed Limit</span>
+              </label>
+              <span className="font-mono text-xs font-bold text-zinc-900 dark:text-white">
+                {currentLimitMb > 0 ? `${currentLimitMb} MB/s` : 'Unlimited'}
+              </span>
+            </div>
+
+            {/* Preset Speed Cap Buttons */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              {SPEED_CAP_PRESETS.map((preset) => {
+                const isSelected = preset.mbps === 0
+                  ? currentLimitMb === 0
+                  : Math.abs(currentLimitMb - preset.mbps) < 0.01;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset.mbps)}
+                    className={`px-2 py-1.5 rounded-lg text-[11px] font-mono font-medium border transition-all ${
+                      isSelected
+                        ? 'bg-black text-white dark:bg-white dark:text-black border-transparent shadow-sm'
+                        : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom MB/s Input */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-zinc-500 whitespace-nowrap">
+                Custom Cap:
+              </span>
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={customMbStr}
+                  onChange={(e) => handleCustomMbChange(e.target.value)}
+                  placeholder="Enter speed in MB/s (e.g. 1, 2.5, 15) — 0 for unlimited"
+                  className="w-full bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-lg pl-3 pr-12 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-mono text-zinc-400 pointer-events-none">
+                  MB/s
+                </span>
+              </div>
             </div>
           </div>
 

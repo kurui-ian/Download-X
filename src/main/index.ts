@@ -234,6 +234,7 @@ function setupIpc() {
 
   ipcMain.handle('settings:save', (_e, newSettings: AppSettings) => {
     store.saveSettings(newSettings);
+    downloadManager.applySpeedLimit(newSettings.speedLimitBytesPerSec || 0);
     return true;
   });
 

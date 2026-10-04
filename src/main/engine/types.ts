@@ -86,6 +86,8 @@ export interface UrlInspectionResult {
   isTorrent?: boolean;
   infoHash?: string;
   torrentFiles?: TorrentFileInfo[];
+  secondaryAudioUrl?: string;
+  quality?: string;
 }
 
 export interface AppSettings {

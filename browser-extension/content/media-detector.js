@@ -24,6 +24,7 @@
 
   let scanScheduled = false;
   let scanTimer = null;
+  let lastKnownLocationHref = window.location.href;
 
   // --- Utility Helpers ---
 
@@ -814,6 +815,60 @@
       : document.title;
     const title = cleanTitle(rawTitle);
 
+    const videoOptions = [
+      {
+        url: `https://www.youtube.com/watch?v=${videoId}&dlx_quality=1080p`,
+        quality: '1080p Full HD',
+        format: 'MP4',
+        mimeType: 'video/mp4',
+        fileSize: 0,
+        height: 1080,
+        width: 1920,
+        kind: 'video',
+      },
+      {
+        url: `https://www.youtube.com/watch?v=${videoId}&dlx_quality=720p`,
+        quality: '720p HD',
+        format: 'MP4',
+        mimeType: 'video/mp4',
+        fileSize: 0,
+        height: 720,
+        width: 1280,
+        kind: 'video',
+      },
+      {
+        url: `https://www.youtube.com/watch?v=${videoId}&dlx_quality=480p`,
+        quality: '480p SD',
+        format: 'MP4',
+        mimeType: 'video/mp4',
+        fileSize: 0,
+        height: 480,
+        width: 854,
+        kind: 'video',
+      },
+      {
+        url: `https://www.youtube.com/watch?v=${videoId}&dlx_quality=360p`,
+        quality: '360p',
+        format: 'MP4',
+        mimeType: 'video/mp4',
+        fileSize: 0,
+        height: 360,
+        width: 640,
+        kind: 'video',
+      },
+    ];
+
+    const audioOptions = [
+      {
+        url: `https://www.youtube.com/watch?v=${videoId}&dlx_quality=audio`,
+        quality: 'Original Audio (M4A)',
+        format: 'M4A',
+        mimeType: 'audio/mp4',
+        fileSize: 0,
+        kind: 'audio',
+      },
+    ];
+
     const thumbnailOptions = [
       {
         url: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
@@ -836,6 +891,8 @@
     return {
       videoId,
       title,
+      videoOptions,
+      audioOptions,
       thumbnailOptions,
     };
   }
@@ -844,6 +901,11 @@
 
   function performMediaScan() {
     scanScheduled = false;
+    if (window.location.href !== lastKnownLocationHref) {
+      lastKnownLocationHref = window.location.href;
+      networkMetaMap.clear();
+      detectedItemsMap.clear();
+    }
     const activeIds = new Set();
     const pageMetaVideos = harvestPerformanceAndMetaMedia();
 
@@ -859,9 +921,18 @@
           elementToItemId.set(videoEl, id);
         }
 
-        const { videoOptions: rawVideoOptions, audioOptions } = extractVideoOptions(videoEl, pageMetaVideos);
-        const nonPatternOptions = rawVideoOptions.filter((o) => !o.url.includes('__DLX_SEG_'));
-        const videoOptions = nonPatternOptions.length > 0 ? nonPatternOptions : rawVideoOptions;
+        const { videoOptions: rawVideoOptions, audioOptions: rawAudioOptions } = extractVideoOptions(videoEl, pageMetaVideos);
+        const nonPatternOptions = rawVideoOptions.filter(
+          (o) => !o.url.includes('__DLX_SEG_') && !o.url.includes('googlevideo.com/videoplayback')
+        );
+        const videoOptions = ytInfo
+          ? [...ytInfo.videoOptions]
+          : nonPatternOptions.length > 0
+          ? nonPatternOptions
+          : rawVideoOptions;
+        const audioOptions = ytInfo
+          ? [...ytInfo.audioOptions]
+          : rawAudioOptions.filter((o) => !o.url.includes('googlevideo.com/videoplayback'));
 
         const currentSrc = videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src') || '';
         const posterAttr = videoEl.getAttribute('poster') || '';
@@ -873,7 +944,7 @@
           continue;
         }
 
-        const isEmeProtected = Boolean(videoEl.mediaKeys);
+        const isEmeProtected = Boolean(videoEl.mediaKeys) && !ytInfo;
         const isBlobOnly = videoOptions.length === 0 && (currentSrc.startsWith('blob:') || !currentSrc);
         const isProtected = isEmeProtected || isBlobOnly;
 
@@ -940,8 +1011,34 @@
         activeIds.add(id);
       }
 
-      // If no <video> DOM element was found in this frame, but OpenGraph/JSON-LD or networkMetaMap has video URLs:
-      if (videos.length === 0 && (pageMetaVideos.length > 0 || networkMetaMap.size > 0)) {
+      // If no <video> DOM element was found in this frame, but ytInfo or OpenGraph/JSON-LD or networkMetaMap has video URLs:
+      if (videos.length === 0 && ytInfo) {
+        const id = `dlx_yt_${ytInfo.videoId}`;
+        const primaryOpt = ytInfo.videoOptions[0];
+        const item = {
+          id,
+          mediaType: 'video',
+          title: ytInfo.title,
+          duration: '',
+          resolution: primaryOpt.quality || '1080p Full HD',
+          format: 'MP4',
+          mimeType: 'video/mp4',
+          fileSize: 0,
+          hasVideo: true,
+          hasAudio: true,
+          protected: false,
+          protectedMessage: '',
+          url: primaryOpt.url,
+          filename: buildSafeFilename(ytInfo.title, 'MP4', primaryOpt.quality, primaryOpt.url),
+          videoOptions: [...ytInfo.videoOptions],
+          audioOptions: [...ytInfo.audioOptions],
+          thumbnailOptions: [...ytInfo.thumbnailOptions],
+          sourcePageUrl: window.location.href,
+          sourcePageTitle: document.title,
+        };
+        detectedItemsMap.set(id, item);
+        activeIds.add(id);
+      } else if (videos.length === 0 && (pageMetaVideos.length > 0 || networkMetaMap.size > 0)) {
         const { videoOptions, audioOptions } = extractVideoOptions(null, pageMetaVideos);
         if (videoOptions.length > 0) {
           const id = 'dlx_page_meta_video';
@@ -1331,6 +1428,16 @@
     },
     true
   );
+
+  window.addEventListener('yt-navigate-finish', () => {
+    networkMetaMap.clear();
+    detectedItemsMap.clear();
+    scheduleMediaScan(250);
+  });
+
+  window.addEventListener('popstate', () => {
+    scheduleMediaScan(250);
+  });
 
   document.addEventListener(
     'load',

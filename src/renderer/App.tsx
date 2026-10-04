@@ -244,7 +244,16 @@ export const App: React.FC = () => {
   };
 
   const handleDelete = async (id: string, deleteFile: boolean) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
     await window.electronAPI.deleteTask(id, deleteFile);
+  };
+
+  const handleDeleteMultiple = async (ids: string[], deleteFile: boolean) => {
+    const idSet = new Set(ids);
+    setTasks((prev) => prev.filter((t) => !idSet.has(t.id)));
+    for (const id of ids) {
+      await window.electronAPI.deleteTask(id, deleteFile);
+    }
   };
 
   const handleOpenFile = async (id: string) => {
@@ -345,6 +354,7 @@ export const App: React.FC = () => {
           onPause={handlePause}
           onResume={handleResume}
           onDelete={handleDelete}
+          onDeleteMultiple={handleDeleteMultiple}
           onOpenFile={handleOpenFile}
           onOpenFolder={handleOpenFolder}
           onOpenAddModal={() => {

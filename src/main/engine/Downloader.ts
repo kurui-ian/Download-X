@@ -12,10 +12,12 @@ import {
   extractFileNameFromUrl,
   categorizeFileName,
   resolveHlsMediaPlaylist,
+  resolveYouTubeStream,
   fetchBufferWithHeaders,
   keepAliveHttpAgent,
   keepAliveHttpsAgent,
 } from './inspector';
+import { muxFmp4VideoAndAudio } from './fmp4Muxer';
 
 export class Downloader extends EventEmitter {
   private task: DownloadTask;
@@ -105,7 +107,64 @@ export class Downloader extends EventEmitter {
     this.emit('status-change', this.task);
 
     try {
-      const targetUrl = this.task.finalUrl || this.task.url;
+      let targetUrl = this.task.finalUrl || this.task.url;
+      const lowerTarget = targetUrl.toLowerCase();
+      const lowerSource = (this.task.sourcePageUrl || this.task.referrer || '').toLowerCase();
+
+      // 0. Automatically resolve or refresh YouTube / googlevideo.com streams via Innertube ANDROID/IOS
+      const isYouTubeTask =
+        lowerTarget.includes('youtube.com/watch') ||
+        lowerTarget.includes('youtube.com/shorts/') ||
+        lowerTarget.includes('youtu.be/') ||
+        lowerTarget.includes('googlevideo.com/videoplayback') ||
+        lowerSource.includes('youtube.com/watch') ||
+        lowerSource.includes('youtube.com/shorts/');
+
+      if (
+        isYouTubeTask &&
+        (!targetUrl.includes('googlevideo.com') ||
+          targetUrl.includes('c=WEB') ||
+          !targetUrl.includes('ratebypass=yes') ||
+          this.task.downloadedBytes === 0)
+      ) {
+        const ytSource =
+          this.task.sourcePageUrl && this.task.sourcePageUrl.includes('youtube.com')
+            ? this.task.sourcePageUrl
+            : this.task.referrer && this.task.referrer.includes('youtube.com')
+            ? this.task.referrer
+            : targetUrl;
+        const ytResolved = await resolveYouTubeStream(
+          ytSource,
+          this.task.quality,
+          this.task.mimeType,
+          targetUrl
+        );
+        if (ytResolved && ytResolved.primaryUrl) {
+          this.task.finalUrl = ytResolved.primaryUrl;
+          targetUrl = ytResolved.primaryUrl;
+          if (ytResolved.secondaryAudioUrl) {
+            (this.task as any).secondaryAudioUrl = ytResolved.secondaryAudioUrl;
+          } else {
+            delete (this.task as any).secondaryAudioUrl;
+          }
+          const primaryBytes =
+            ytResolved.fileSize > 0
+              ? Math.max(0, ytResolved.fileSize - (ytResolved.audioFileSize || 0))
+              : 0;
+          if (primaryBytes > 0) {
+            this.task.fileSize = primaryBytes;
+          }
+          this.task.supportsRanges = true;
+          this.task.threadCount = 1;
+          this.task.downloadedBytes = 0;
+          this.task.chunks = [];
+        }
+      }
+
+      if (targetUrl.includes('googlevideo.com')) {
+        this.task.threadCount = 1;
+      }
+
       const isHls = this.isHlsUrl(targetUrl) || Boolean((this.task as any).isHlsStream);
 
       // 1. Prepare target file on disk
@@ -132,7 +191,12 @@ export class Downloader extends EventEmitter {
       // 4. Route HLS streams, single streams, or multi-part Range downloads
       if (isHls) {
         await this.downloadHlsStream();
-      } else if (isOneTimeOrSignedUrl(this.task.url) || !this.task.supportsRanges || this.task.chunks.length <= 1) {
+      } else if (
+        targetUrl.includes('googlevideo.com') ||
+        isOneTimeOrSignedUrl(targetUrl) ||
+        !this.task.supportsRanges ||
+        this.task.chunks.length <= 1
+      ) {
         this.downloadSingleStream();
       } else {
         // Multi-part Range download
@@ -240,6 +304,7 @@ export class Downloader extends EventEmitter {
     for (const [, r] of this.activeResponses.entries()) {
       try {
         r.removeAllListeners();
+        r.on('error', () => {});
         r.destroy();
       } catch {}
     }
@@ -247,6 +312,7 @@ export class Downloader extends EventEmitter {
     for (const [, req] of this.activeRequests.entries()) {
       try {
         req.removeAllListeners();
+        req.on('error', () => {});
         req.destroy();
       } catch {}
     }
@@ -296,6 +362,13 @@ export class Downloader extends EventEmitter {
     };
 
     const req = client.request(reqOptions, (res) => {
+      res.on('error', (err) => {
+        this.activeResponses.delete(chunk.id);
+        this.activeRequests.delete(chunk.id);
+        if (this.isPaused || this.isCancelled) return;
+        this.retryChunk(chunk, err);
+      });
+
       if (this.isPaused || this.isCancelled) {
         res.destroy();
         return;
@@ -389,13 +462,6 @@ export class Downloader extends EventEmitter {
           this.retryChunk(chunk, new Error('Chunk connection closed prematurely'));
         }
       });
-
-      res.on('error', (err) => {
-        this.activeResponses.delete(chunk.id);
-        this.activeRequests.delete(chunk.id);
-        if (this.isPaused || this.isCancelled) return;
-        this.retryChunk(chunk, err);
-      });
     });
 
     req.on('error', (err) => {
@@ -440,6 +506,13 @@ export class Downloader extends EventEmitter {
         agent,
       },
       (res) => {
+        res.on('error', (err) => {
+          this.activeResponses.delete(0);
+          this.activeRequests.delete(0);
+          if (this.isPaused || this.isCancelled) return;
+          this.handleError(err);
+        });
+
         if (this.isPaused || this.isCancelled) {
           res.destroy();
           return;
@@ -555,13 +628,6 @@ export class Downloader extends EventEmitter {
           }
           this.completeDownload();
         });
-
-        res.on('error', (err) => {
-          this.activeResponses.delete(0);
-          this.activeRequests.delete(0);
-          if (this.isPaused || this.isCancelled) return;
-          this.handleError(err);
-        });
       }
     );
 
@@ -608,9 +674,13 @@ export class Downloader extends EventEmitter {
     if (!playlist && this.task.sourcePageUrl && this.task.sourcePageUrl !== this.task.referrer) {
       playlist = await resolveHlsMediaPlaylist(targetUrl, this.task.sourcePageUrl);
     }
+    if (!playlist && (this.task as any).hlsResolvedPlaylist && Array.isArray((this.task as any).hlsResolvedPlaylist.segmentUrls)) {
+      playlist = (this.task as any).hlsResolvedPlaylist;
+    }
     if (!playlist || playlist.segmentUrls.length === 0) {
       throw new Error('Could not resolve video stream segments from playlist');
     }
+    (this.task as any).hlsResolvedPlaylist = playlist;
 
     let encryptionKey: Buffer | null = null;
     if (playlist.encryptionKeyUrl) {
@@ -787,7 +857,7 @@ export class Downloader extends EventEmitter {
       this.task.chunks[0].totalBytes = diskWriteOffset;
       this.task.chunks[0].status = 'completed';
     }
-    this.completeDownload();
+    await this.completeDownload();
   }
 
   private retryChunk(chunk: ChunkInfo, err: Error): void {
@@ -820,26 +890,84 @@ export class Downloader extends EventEmitter {
     }
   }
 
-  private completeDownload(): void {
-    if (this.isPaused || this.isCancelled) return;
-    this.stopSpeedTicker();
-    if (this.fd !== null && (this.task as any).isHlsStream && this.task.downloadedBytes > 0) {
+  private isCompleting: boolean = false;
+
+  private async completeDownload(): Promise<void> {
+    if (this.isPaused || this.isCancelled || this.isCompleting) return;
+    this.isCompleting = true;
+
+    try {
+      if (this.fd !== null && (this.task as any).isHlsStream && this.task.downloadedBytes > 0) {
+        try {
+          fs.ftruncateSync(this.fd, this.task.downloadedBytes);
+        } catch {}
+      }
+      this.closeFileDescriptor();
+
+      // If this video has a companion audio stream (e.g. YouTube 1080p/720p/480p adaptive fMP4), download & mux it
+      const audioUrl = (this.task as any).secondaryAudioUrl;
+      if (audioUrl && typeof audioUrl === 'string' && !this.isPaused && !this.isCancelled) {
+        const audioTempPath = `${this.task.savePath}.audio.tmp`;
+        try {
+          const baseBytes = this.task.downloadedBytes;
+          const audioResp = await fetchBufferWithHeaders(
+            audioUrl,
+            this.task.referrer,
+            6,
+            60000,
+            (chunkLen) => {
+              if (this.isPaused || this.isCancelled) return;
+              this.task.downloadedBytes += chunkLen;
+              if (this.task.downloadedBytes > this.task.fileSize) {
+                this.task.fileSize = this.task.downloadedBytes;
+              }
+            }
+          );
+          if (this.isPaused || this.isCancelled) {
+            this.isCompleting = false;
+            return;
+          }
+          if (audioResp.statusCode < 400 && audioResp.buffer.length > 0) {
+            fs.writeFileSync(audioTempPath, audioResp.buffer);
+            muxFmp4VideoAndAudio(this.task.savePath, audioTempPath, this.task.savePath);
+          } else {
+            this.task.downloadedBytes = baseBytes;
+          }
+        } catch (e) {
+          console.warn('Secondary audio download/mux warning:', e);
+        } finally {
+          try {
+            if (fs.existsSync(audioTempPath)) fs.unlinkSync(audioTempPath);
+          } catch {}
+          delete (this.task as any).secondaryAudioUrl;
+        }
+      }
+
+      this.stopSpeedTicker();
+
       try {
-        fs.ftruncateSync(this.fd, this.task.downloadedBytes);
+        if (fs.existsSync(this.task.savePath)) {
+          const st = fs.statSync(this.task.savePath);
+          if (st.size > 0) {
+            this.task.fileSize = st.size;
+            this.task.downloadedBytes = st.size;
+          }
+        }
       } catch {}
+
+      this.task.status = 'completed';
+      this.task.speed = 0;
+      this.task.eta = 0;
+      this.task.progress = 100;
+      this.task.completedAt = Date.now();
+      this.task.downloadedBytes = this.task.fileSize > 0 ? this.task.fileSize : this.task.downloadedBytes;
+      this.task.category = categorizeFileName(this.task.fileName, '', this.task.finalUrl || this.task.url);
+
+      this.emit('progress', this.task);
+      this.emit('completed', this.task);
+    } finally {
+      this.isCompleting = false;
     }
-    this.closeFileDescriptor();
-
-    this.task.status = 'completed';
-    this.task.speed = 0;
-    this.task.eta = 0;
-    this.task.progress = 100;
-    this.task.completedAt = Date.now();
-    this.task.downloadedBytes = this.task.fileSize > 0 ? this.task.fileSize : this.task.downloadedBytes;
-    this.task.category = categorizeFileName(this.task.fileName, '', this.task.finalUrl || this.task.url);
-
-    this.emit('progress', this.task);
-    this.emit('completed', this.task);
   }
 
   private startSpeedTicker(): void {
@@ -913,6 +1041,7 @@ export class Downloader extends EventEmitter {
         res.removeAllListeners('data');
         res.removeAllListeners('end');
         res.removeAllListeners('error');
+        res.on('error', () => {});
         res.destroy();
       } catch {}
     }
@@ -921,6 +1050,7 @@ export class Downloader extends EventEmitter {
     for (const [, req] of this.activeRequests.entries()) {
       try {
         req.removeAllListeners('error');
+        req.on('error', () => {});
         req.destroy();
       } catch {}
     }
@@ -948,6 +1078,7 @@ export class Downloader extends EventEmitter {
     for (const [, res] of this.activeResponses.entries()) {
       try {
         res.removeAllListeners();
+        res.on('error', () => {});
         res.destroy();
       } catch {}
     }
@@ -956,6 +1087,7 @@ export class Downloader extends EventEmitter {
     for (const [, req] of this.activeRequests.entries()) {
       try {
         req.removeAllListeners();
+        req.on('error', () => {});
         req.destroy();
       } catch {}
     }

@@ -10,8 +10,8 @@
     "build:renderer": "tsc && vite build",
     "build:main": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:main",
-    "dist": "npm run build && electron-builder --win portable",
-    "dist:all": "npm run build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win nsis portable",
+    "dist:all": "npm run build && electron-builder --win nsis portable"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -38,7 +38,7 @@
     "vite-plugin-electron-renderer": "^0.14.6"
   },
   "build": {
-    "appId": "com.dlx.downloadmanager",
+    "appId": "com.dlx.manager",
     "productName": "DLX",
     "npmRebuild": false,
     "directories": {
@@ -50,10 +50,21 @@
       "native-host/**/*",
       "build/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "browser-extension",
+        "to": "browser-extension"
+      }
+    ],
     "win": {
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false,
       "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
         {
           "target": "portable",
           "arch": [
@@ -61,6 +72,21 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DLX Download Manager",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
     }
   }
 }

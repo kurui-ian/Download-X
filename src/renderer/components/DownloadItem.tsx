@@ -9,7 +9,8 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
-  RotateCcw
+  RotateCcw,
+  Check
 } from 'lucide-react';
 import { DownloadTask } from '../types';
 import { formatBytes, formatSpeed, formatEta, formatDate } from '../utils/formatters';
@@ -18,6 +19,8 @@ import { SegmentedBar } from './SegmentedBar';
 
 interface DownloadItemProps {
   task: DownloadTask;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string, shiftKey?: boolean) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onDelete: (id: string, deleteFile: boolean) => void;
@@ -27,6 +30,8 @@ interface DownloadItemProps {
 
 export const DownloadItem: React.FC<DownloadItemProps> = ({
   task,
+  isSelected = false,
+  onToggleSelect,
   onPause,
   onResume,
   onDelete,
@@ -67,8 +72,34 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({
   }, [isCompleted, task.savePath]);
 
   return (
-    <div className="group relative bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700/80 rounded-xl p-4 transition-all duration-200 shadow-sm">
+    <div
+      className={`group relative border rounded-xl p-4 transition-all duration-200 shadow-sm ${
+        isSelected
+          ? 'bg-zinc-50/90 dark:bg-zinc-900/60 border-zinc-900 dark:border-zinc-200 ring-1 ring-zinc-900/10 dark:ring-zinc-100/10'
+          : 'bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700/80'
+      }`}
+    >
       <div className="flex items-start gap-3.5">
+        {/* Multi-Select Checkbox */}
+        {onToggleSelect && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect(task.id, e.shiftKey);
+            }}
+            className={`mt-3 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all ${
+              isSelected
+                ? 'bg-black border-black text-white dark:bg-white dark:border-white dark:text-black'
+                : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-zinc-500 dark:hover:border-zinc-500'
+            }`}
+            title={isSelected ? 'Deselect item' : 'Select item (Shift+click for range)'}
+            aria-label={isSelected ? 'Deselect item' : 'Select item'}
+          >
+            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+          </button>
+        )}
+
         {/* Cover Photo / File Thumbnail or Monochrome Category Icon */}
         {thumbnailUrl ? (
           <div

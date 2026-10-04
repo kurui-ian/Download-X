@@ -204,6 +204,9 @@
       const abs = resolveUrl(rawCandidate, baseUrl);
       if (abs && (abs.startsWith('http://') || abs.startsWith('https://'))) {
         const lower = abs.toLowerCase();
+        // Skip YouTube c=WEB googlevideo.com URLs (handled cleanly via YouTube Innertube resolver)
+        if (lower.includes('googlevideo.com')) return;
+
         const typeStr = String(obj.type || obj.mime || '').toLowerCase();
         const isHls =
           lower.includes('.m3u8') ||
@@ -216,7 +219,6 @@
           /\.(mp4|webm|mkv|mov|m4v)(\?|$)/i.test(lower) ||
           typeStr.startsWith('video/') ||
           typeStr === 'mp4' ||
-          lower.includes('videoplayback') ||
           lower.includes('mime=video');
 
         if (isHls || isDirectVideo) {

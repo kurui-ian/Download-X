@@ -339,8 +339,9 @@ function classifyMediaNetworkResource(urlStr, contentType = '', requestType = ''
   const lowerUrl = (urlStr || '').toLowerCase();
   const mime = (contentType || '').toLowerCase();
 
-  // Skip DASH manifests and small segment chunks
+  // Skip DASH manifests, small segment chunks, and YouTube web-player SABR sub-requests
   if (
+    lowerUrl.includes('googlevideo.com/videoplayback') ||
     lowerUrl.includes('.mpd') ||
     lowerUrl.includes('.m4s') ||
     lowerUrl.includes('bytestart=') ||
@@ -939,9 +940,9 @@ async function ensureScriptsAndRescanTab(tabId) {
   return await buildMergedTabMedia(tabId);
 }
 
-// Clear stale tab media when top-level navigation occurs
+// Clear stale tab media when top-level or SPA navigation occurs
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (changeInfo.status === 'loading' && changeInfo.url) {
+  if (changeInfo.url) {
     try {
       await chrome.storage.session.remove([
         `tab_media_${tabId}`,

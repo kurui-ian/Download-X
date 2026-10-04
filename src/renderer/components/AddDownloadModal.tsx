@@ -130,9 +130,15 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       }
     }
 
+    const isYouTubeOrGoogleVideo =
+      clean.includes('googlevideo.com') ||
+      clean.includes('youtube.com/') ||
+      clean.includes('youtu.be/');
+
     // If the browser extension already captured the exact stream metadata and file size,
     // use it directly so we don't send an extra probe request that could burn a single-use token.
     if (
+      !isYouTubeOrGoogleVideo &&
       initialData?.source &&
       initialData.url &&
       initialData.url.trim() === clean &&
@@ -153,7 +159,11 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     }
 
     try {
-      const result = await window.electronAPI.inspectUrl(clean, customReferrer || initialData?.referrer);
+      const refToUse =
+        isYouTubeOrGoogleVideo && initialData?.sourcePageUrl
+          ? initialData.sourcePageUrl
+          : customReferrer || initialData?.referrer || initialData?.sourcePageUrl;
+      const result = await window.electronAPI.inspectUrl(clean, refToUse);
       setInspection(result);
       setFileName((prev) => {
         const current = (prev || existingName || '').trim();
@@ -294,7 +304,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       sourcePageTitle: initialData?.sourcePageTitle,
       quality: initialData?.quality,
       mediaType: initialData?.mediaType,
-      secondaryAudioUrl: initialData?.secondaryAudioUrl,
+      secondaryAudioUrl: inspection?.secondaryAudioUrl || initialData?.secondaryAudioUrl,
     });
 
     onClose();

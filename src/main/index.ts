@@ -16,6 +16,15 @@ const store = new PersistenceStore();
 const downloadManager = new DownloadManager(store);
 const bridgeServer = new NativeBridgeServer(downloadManager, store, () => mainWindow);
 
+// Prevent transient TLS/socket resets from triggering Electron's fatal error dialog
+process.on('uncaughtException', (err) => {
+  console.warn('[DLX Main] Ignored uncaught exception:', err?.message || err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.warn('[DLX Main] Ignored unhandled rejection:', reason?.message || reason);
+});
+
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.dlx.manager');
 }

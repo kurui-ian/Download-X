@@ -13,7 +13,8 @@ import {
   isNumericOrHashOnly,
   extractYouTubeVideoId,
   fetchYouTubeTitle,
-  ensureFileExtension
+  ensureFileExtension,
+  isOneTimeOrSignedUrl
 } from '../engine/inspector';
 import { PersistenceStore } from './store';
 
@@ -41,6 +42,7 @@ export class DownloadManager {
   private downloaders: Map<string, Downloader> = new Map();
   private mainWindow: BrowserWindow | null = null;
   private saveDebounceTimer: NodeJS.Timeout | null = null;
+  private activeNotifications: Set<Notification> = new Set();
 
   constructor(store: PersistenceStore) {
     this.store = store;
@@ -261,7 +263,8 @@ export class DownloadManager {
     this.broadcastTasks();
 
     const isHlsUrl = cleanUrl.toLowerCase().includes('.m3u8') || cleanUrl.includes('__DLX_SEG_');
-    if (isHlsUrl && task.fileSize > 0) {
+    const isSignedOrStream = !isTorrent && (isHlsUrl || isOneTimeOrSignedUrl(cleanUrl) || Boolean(params.source));
+    if (isSignedOrStream) {
       if (task.status !== 'paused' && task.status !== 'cancelled') {
         task.status = params.autoStart !== false ? 'queued' : 'paused';
       }
@@ -289,7 +292,7 @@ export class DownloadManager {
         }
         task.supportsRanges = inspection.supportsRanges;
         task.category = isTorrent ? 'torrent' : (inspection.category !== 'other' ? inspection.category : task.category);
-        task.threadCount = inspection.supportsRanges ? threadCount : threadCount;
+        task.threadCount = inspection.supportsRanges ? threadCount : 1;
         if (inspection.mimeType && inspection.mimeType !== 'application/octet-stream') {
           task.mimeType = inspection.mimeType;
         }
@@ -479,13 +482,45 @@ export class DownloadManager {
     return false;
   }
 
-  public openFolder(id: string): void {
+  public openFolder(id: string, fallbackPath?: string): void {
     const task = this.tasks.get(id);
-    if (task && fs.existsSync(task.savePath)) {
-      shell.showItemInFolder(task.savePath);
-    } else if (task) {
-      shell.openPath(path.dirname(task.savePath));
+    const rawTarget = (task && task.savePath) || fallbackPath;
+    if (!rawTarget) return;
+
+    const targetPath = path.normalize(rawTarget);
+    if (fs.existsSync(targetPath)) {
+      shell.showItemInFolder(targetPath);
+    } else {
+      const dirPath = path.dirname(targetPath);
+      if (fs.existsSync(dirPath)) {
+        shell.openPath(dirPath);
+      }
     }
+  }
+
+  private showCompletionNotification(completedTask: DownloadTask, isTorrent: boolean = false): void {
+    const settings = this.store.getSettings();
+    if (!settings.enableNotifications || !Notification.isSupported()) return;
+
+    const notif = new Notification({
+      title: isTorrent ? 'Torrent Download Complete' : 'Download Complete',
+      body: `${completedTask.fileName} has finished downloading. Click to view in folder.`,
+      silent: false,
+    });
+
+    this.activeNotifications.add(notif);
+
+    const cleanup = () => {
+      this.activeNotifications.delete(notif);
+    };
+
+    notif.on('click', () => {
+      cleanup();
+      this.openFolder(completedTask.id, completedTask.savePath);
+    });
+
+    notif.on('close', cleanup);
+    notif.show();
   }
 
   private processQueue(): void {
@@ -531,16 +566,7 @@ export class DownloadManager {
           this.tasks.set(completedTask.id, completedTask);
           this.scheduleSave();
           this.broadcastTasks();
-
-          const settings = this.store.getSettings();
-          if (settings.enableNotifications && Notification.isSupported()) {
-            new Notification({
-              title: 'Torrent Download Complete',
-              body: `${completedTask.fileName} has finished downloading.`,
-              silent: false,
-            }).show();
-          }
-
+          this.showCompletionNotification(completedTask, true);
           this.processQueue();
         },
         (_err, errorTask) => {
@@ -581,16 +607,7 @@ export class DownloadManager {
       this.tasks.set(completedTask.id, completedTask);
       this.scheduleSave();
       this.broadcastTasks();
-
-      const currentSettings = this.store.getSettings();
-      if (currentSettings.enableNotifications && Notification.isSupported()) {
-        new Notification({
-          title: 'Download Complete',
-          body: `${completedTask.fileName} has finished downloading.`,
-          silent: false,
-        }).show();
-      }
-
+      this.showCompletionNotification(completedTask, false);
       this.processQueue();
     });
 

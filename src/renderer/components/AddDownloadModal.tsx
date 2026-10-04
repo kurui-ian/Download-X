@@ -130,6 +130,28 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       }
     }
 
+    // If the browser extension already captured the exact stream metadata and file size,
+    // use it directly so we don't send an extra probe request that could burn a single-use token.
+    if (
+      initialData?.source &&
+      initialData.url &&
+      initialData.url.trim() === clean &&
+      initialData.fileSize &&
+      initialData.fileSize > 0
+    ) {
+      setInspection({
+        url: clean,
+        finalUrl: clean,
+        fileName: existingName || initialData.fileName || 'video.mp4',
+        fileSize: initialData.fileSize,
+        supportsRanges: false,
+        mimeType: initialData.mimeType || 'video/mp4',
+        category: (initialData.mediaType as any) || 'video',
+      });
+      setIsInspecting(false);
+      return;
+    }
+
     try {
       const result = await window.electronAPI.inspectUrl(clean, customReferrer || initialData?.referrer);
       setInspection(result);
@@ -147,7 +169,9 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
         return result.fileName || '';
       });
     } catch (err: any) {
-      setInspectError(err.message || 'Unable to inspect metadata');
+      if (!initialData?.source) {
+        setInspectError(err.message || 'Unable to inspect metadata');
+      }
       setInspection(null);
     } finally {
       setIsInspecting(false);

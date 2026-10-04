@@ -16,6 +16,10 @@ const store = new PersistenceStore();
 const downloadManager = new DownloadManager(store);
 const bridgeServer = new NativeBridgeServer(downloadManager, store, () => mainWindow);
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.dlx.manager');
+}
+
 // Enforce single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -30,7 +34,27 @@ if (!gotTheLock) {
   });
 }
 
+function getAppIconPath(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '../../build/icon.ico'),
+    path.join(__dirname, '../../build/icon.png'),
+    path.join(__dirname, '../../dist/icon.ico'),
+    path.join(__dirname, '../../dist/icon.png'),
+    path.join(app.getAppPath(), 'build/icon.ico'),
+    path.join(app.getAppPath(), 'build/icon.png'),
+    path.join(app.getAppPath(), 'dist/icon.png'),
+    path.join(app.getAppPath(), 'public/icon.png'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 function createMainWindow() {
+  const iconPath = getAppIconPath();
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
@@ -39,6 +63,7 @@ function createMainWindow() {
     backgroundColor: '#020617',
     frame: true, // Native titlebar with dark controls
     title: 'DLX - Download Manager',
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -101,16 +126,21 @@ function createMainWindow() {
 }
 
 function createTray() {
-  // Simple transparent 16x16 tray icon representation or native icon
-  const icon = nativeImage.createFromBuffer(
-    Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAZElEQVQ4T2NkoBAwUqifYdQAUg34//8/AxZ16OpBhkJ1kGwDG2bEph5ZPTYd+PQT7GY8NuF1IyH1hDCpGvAaAONyDAlKkhsJmY5sLsbGJsikwWBk2ICQerLciM+NsNzApx8Z4xMHAODjIhVz9/7yAAAAAElFTkSuQmCC',
-      'base64'
-    )
-  );
+  const iconPath = getAppIconPath();
+  let icon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+  if (!icon.isEmpty()) {
+    icon = icon.resize({ width: 16, height: 16 });
+  } else {
+    icon = nativeImage.createFromBuffer(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAZElEQVQ4T2NkoBAwUqifYdQAUg34//8/AxZ16OpBhkJ1kGwDG2bEph5ZPTYd+PQT7GY8NuF1IyH1hDCpGvAaAONyDAlKkhsJmY5sLsbGJsikwWBk2ICQerLciM+NsNzApx8Z4xMHAODjIhVz9/7yAAAAAElFTkSuQmCC',
+        'base64'
+      )
+    );
+  }
 
   tray = new Tray(icon);
-  tray.setToolTip('DLX - Download Xcelerator');
+  tray.setToolTip('DLX - Download Manager');
 
   const contextMenu = Menu.buildFromTemplate([
     {

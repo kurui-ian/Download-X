@@ -47,9 +47,11 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "native-host/**/*"
+      "native-host/**/*",
+      "build/**/*"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         {

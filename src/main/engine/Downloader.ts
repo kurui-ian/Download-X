@@ -235,7 +235,31 @@ export class Downloader extends EventEmitter {
     }
   }
 
-  private downloadChunk(chunk: ChunkInfo): void {
+  private fallbackToSingleStream(): void {
+    if (this.isPaused || this.isCancelled) return;
+    for (const [, r] of this.activeResponses.entries()) {
+      try {
+        r.removeAllListeners();
+        r.destroy();
+      } catch {}
+    }
+    this.activeResponses.clear();
+    for (const [, req] of this.activeRequests.entries()) {
+      try {
+        req.removeAllListeners();
+        req.destroy();
+      } catch {}
+    }
+    this.activeRequests.clear();
+
+    this.task.supportsRanges = false;
+    this.task.threadCount = 1;
+    this.task.downloadedBytes = 0;
+    this.initializeChunks();
+    this.downloadSingleStream(0);
+  }
+
+  private downloadChunk(chunk: ChunkInfo, profile: number = 0): void {
     if (this.isPaused || this.isCancelled) return;
 
     chunk.status = 'downloading';
@@ -267,7 +291,7 @@ export class Downloader extends EventEmitter {
       port: parsed.port || (isHttps ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: 'GET',
-      headers: getRequestHeaders(targetUrl, chunkHeaders),
+      headers: getRequestHeaders(targetUrl, chunkHeaders, profile),
       agent,
     };
 
@@ -284,7 +308,7 @@ export class Downloader extends EventEmitter {
         this.activeResponses.delete(chunk.id);
         const nextUrl = new URL(res.headers.location, this.task.url).toString();
         this.task.finalUrl = nextUrl;
-        return this.downloadChunk(chunk);
+        return this.downloadChunk(chunk, profile);
       }
 
       if (res.statusCode === 200 && chunk.id > 0) {
@@ -295,10 +319,22 @@ export class Downloader extends EventEmitter {
         return;
       }
 
+      if (res.statusCode === 403 && profile < 3) {
+        res.destroy();
+        this.activeResponses.delete(chunk.id);
+        this.activeRequests.delete(chunk.id);
+        return this.downloadChunk(chunk, profile + 1);
+      }
+
       if (res.statusCode && res.statusCode >= 400) {
         res.destroy();
         this.activeResponses.delete(chunk.id);
         this.activeRequests.delete(chunk.id);
+        // If multi-connection Range requests were rejected (e.g., 403 anti-leech), fall back to single stream
+        if (this.task.chunks.length > 1) {
+          this.fallbackToSingleStream();
+          return;
+        }
         this.handleError(
           new Error(`Server returned HTTP ${res.statusCode}: ${res.statusMessage || (res.statusCode === 403 ? 'Access Denied / Protected link' : 'Error')}`)
         );
@@ -372,7 +408,7 @@ export class Downloader extends EventEmitter {
     req.end();
   }
 
-  private downloadSingleStream(): void {
+  private downloadSingleStream(profile: number = 0): void {
     if (this.isPaused || this.isCancelled) return;
 
     const targetUrl = this.task.finalUrl || this.task.url;
@@ -382,11 +418,15 @@ export class Downloader extends EventEmitter {
     const agent = isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent;
 
     const customHeaders: http.OutgoingHttpHeaders = {};
-    if (this.task.downloadedBytes > 0 && this.task.supportsRanges) {
+    if (this.task.downloadedBytes > 0 && this.task.supportsRanges && profile === 0) {
       customHeaders['Range'] = `bytes=${this.task.downloadedBytes}-`;
     }
-    if (this.task.referrer) {
-      customHeaders['Referer'] = this.task.referrer;
+    const effectiveReferrer =
+      profile === 2 && this.task.sourcePageUrl
+        ? this.task.sourcePageUrl
+        : this.task.referrer || this.task.sourcePageUrl;
+    if (effectiveReferrer) {
+      customHeaders['Referer'] = effectiveReferrer;
     }
 
     const req = client.request(
@@ -396,7 +436,7 @@ export class Downloader extends EventEmitter {
         port: parsed.port || (isHttps ? 443 : 80),
         path: parsed.pathname + parsed.search,
         method: 'GET',
-        headers: getRequestHeaders(targetUrl, customHeaders),
+        headers: getRequestHeaders(targetUrl, customHeaders, profile > 3 ? 3 : profile),
         agent,
       },
       (res) => {
@@ -412,7 +452,14 @@ export class Downloader extends EventEmitter {
           this.activeResponses.delete(0);
           const nextUrl = new URL(res.headers.location, this.task.url).toString();
           this.task.finalUrl = nextUrl;
-          return this.downloadSingleStream();
+          return this.downloadSingleStream(profile);
+        }
+
+        if (res.statusCode === 403 && profile < 3) {
+          res.destroy();
+          this.activeResponses.delete(0);
+          this.activeRequests.delete(0);
+          return this.downloadSingleStream(profile + 1);
         }
 
         if (res.statusCode && res.statusCode >= 400) {
@@ -460,32 +507,6 @@ export class Downloader extends EventEmitter {
         }
 
         this.task.category = categorizeFileName(this.task.fileName, mimeType, this.task.finalUrl || this.task.url);
-
-        // Dynamic upgrade to multi-connection Range download if server announces Accept-Ranges: bytes
-        if (
-          this.task.downloadedBytes === 0 &&
-          !isOneTimeOrSignedUrl(this.task.url) &&
-          (this.task.threadCount || 8) > 1 &&
-          this.task.fileSize > 1024 * 1024 &&
-          (res.headers['accept-ranges'] === 'bytes' || res.statusCode === 206)
-        ) {
-          res.destroy();
-          this.activeResponses.delete(0);
-          this.activeRequests.delete(0);
-          this.task.supportsRanges = true;
-          if (this.fd !== null) {
-            try {
-              fs.ftruncateSync(this.fd, this.task.fileSize);
-            } catch {}
-          }
-          this.initializeChunks();
-          this.emit('progress', this.task);
-          for (const chunk of this.task.chunks) {
-            this.downloadChunk(chunk);
-          }
-          return;
-        }
-
         this.emit('progress', this.task);
 
         if (this.task.chunks[0]) {
@@ -583,7 +604,10 @@ export class Downloader extends EventEmitter {
 
     const targetUrl = this.task.finalUrl || this.task.url;
     const isSequentialPattern = targetUrl.includes('__DLX_SEG_');
-    const playlist = await resolveHlsMediaPlaylist(targetUrl, this.task.referrer);
+    let playlist = await resolveHlsMediaPlaylist(targetUrl, this.task.referrer || this.task.sourcePageUrl);
+    if (!playlist && this.task.sourcePageUrl && this.task.sourcePageUrl !== this.task.referrer) {
+      playlist = await resolveHlsMediaPlaylist(targetUrl, this.task.sourcePageUrl);
+    }
     if (!playlist || playlist.segmentUrls.length === 0) {
       throw new Error('Could not resolve video stream segments from playlist');
     }
@@ -591,7 +615,7 @@ export class Downloader extends EventEmitter {
     let encryptionKey: Buffer | null = null;
     if (playlist.encryptionKeyUrl) {
       try {
-        const keyResp = await fetchBufferWithHeaders(playlist.encryptionKeyUrl, this.task.referrer);
+        const keyResp = await fetchBufferWithHeaders(playlist.encryptionKeyUrl, this.task.referrer || this.task.sourcePageUrl);
         if (keyResp.statusCode < 400 && keyResp.buffer.length === 16) {
           encryptionKey = keyResp.buffer;
         }
@@ -606,7 +630,7 @@ export class Downloader extends EventEmitter {
       diskWriteOffset = 0;
       this.task.downloadedBytes = 0;
       if (playlist.initSegmentUrl) {
-        const initResp = await fetchBufferWithHeaders(playlist.initSegmentUrl, this.task.referrer);
+        const initResp = await fetchBufferWithHeaders(playlist.initSegmentUrl, this.task.referrer || this.task.sourcePageUrl);
         if (initResp.statusCode < 400 && initResp.buffer.length > 0 && this.fd !== null) {
           fs.writeSync(this.fd, initResp.buffer, 0, initResp.buffer.length, diskWriteOffset);
           diskWriteOffset += initResp.buffer.length;
@@ -624,9 +648,7 @@ export class Downloader extends EventEmitter {
     }
 
     const totalSegments = playlist.segmentUrls.length;
-    const workerCount = this.speedLimitBytesPerSec > 0
-      ? 1
-      : Math.min(10, Math.max(6, this.task.threadCount || 8));
+    const workerCount = this.speedLimitBytesPerSec > 0 ? 1 : 4;
 
     let nextFetchIndex = startSegIndex;
     let nextWriteIndex = startSegIndex;

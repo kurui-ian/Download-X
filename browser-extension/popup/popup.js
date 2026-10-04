@@ -283,7 +283,7 @@ async function sendItemToDlx(item, opt, forceRedownload = false, btnEl = null) {
       quality: (opt && opt.quality) || item.resolution,
       fileSize: (opt && opt.fileSize) || item.fileSize,
       mediaType: (opt && opt.kind) || item.mediaType,
-      referrer: item.sourcePageUrl || (currentTab ? currentTab.url : undefined),
+      referrer: (opt && opt.referrer) || item.referrer || item.sourcePageUrl || (currentTab ? currentTab.url : undefined),
       sourcePageUrl: currentTab ? currentTab.url : item.sourcePageUrl,
       sourcePageTitle: currentTab ? currentTab.title : item.sourcePageTitle,
       forceRedownload,

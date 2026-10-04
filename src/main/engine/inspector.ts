@@ -51,7 +51,11 @@ export function normalizeUrl(rawUrl: string): string {
   }
 }
 
-export function getRequestHeaders(targetUrl: string, customHeaders?: http.OutgoingHttpHeaders): http.OutgoingHttpHeaders {
+export function getRequestHeaders(
+  targetUrl: string,
+  customHeaders?: http.OutgoingHttpHeaders,
+  profile: number = 0
+): http.OutgoingHttpHeaders {
   let origin = 'https://www.google.com';
   let referer = 'https://www.google.com/';
 
@@ -63,26 +67,44 @@ export function getRequestHeaders(targetUrl: string, customHeaders?: http.Outgoi
     referer = `${parsed.protocol}//${baseDomain}/`;
   } catch {}
 
-  if (customHeaders && customHeaders['Referer']) {
+  const customRefStr = customHeaders && customHeaders['Referer'] ? String(customHeaders['Referer']) : '';
+  if (customRefStr && profile !== 2 && profile !== 3) {
     try {
-      const refUrl = new URL(String(customHeaders['Referer']));
+      const refUrl = new URL(customRefStr);
       origin = `${refUrl.protocol}//${refUrl.host}`;
-      referer = String(customHeaders['Referer']);
+      referer = customRefStr;
     } catch {}
   }
 
-  return {
+  const baseHeaders: http.OutgoingHttpHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': referer,
-    'Origin': origin,
     'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
     'Sec-Ch-Ua-Mobile': '?0',
     'Sec-Ch-Ua-Platform': '"Windows"',
     'Connection': 'keep-alive',
     ...customHeaders,
   };
+
+  if (profile === 0) {
+    baseHeaders['Referer'] = referer;
+    baseHeaders['Origin'] = origin;
+  } else if (profile === 1) {
+    // Standard <video> / navigation request: Referer only, no Origin header
+    baseHeaders['Referer'] = referer;
+    delete baseHeaders['Origin'];
+  } else if (profile === 2) {
+    // Self-domain Referer & Origin
+    baseHeaders['Referer'] = referer;
+    baseHeaders['Origin'] = origin;
+  } else {
+    // Profile 3: No Referer / No Origin (for servers enforcing no-referrer)
+    delete baseHeaders['Referer'];
+    delete baseHeaders['Origin'];
+  }
+
+  return baseHeaders;
 }
 
 export function isOneTimeOrSignedUrl(urlStr: string): boolean {
@@ -91,12 +113,14 @@ export function isOneTimeOrSignedUrl(urlStr: string): boolean {
   }
   try {
     const parsed = new URL(urlStr);
+    const search = parsed.search.toLowerCase();
     const pathname = parsed.pathname.toLowerCase();
-    // Only true single-use proxy tunnel endpoints that burn tokens on range requests
-    if (pathname.includes('/tunnel')) {
+    if (pathname.includes('/tunnel') || pathname.includes('/stream') || pathname.includes('/dl') || pathname.includes('/get')) {
       return true;
     }
-    return false;
+    return ['sig=', 'signature=', 'exp=', 'expires=', 'token=', 'auth=', 'ticket=', 'key=', 'sec='].some((k) =>
+      search.includes(k)
+    );
   } catch {
     return false;
   }
@@ -448,7 +472,7 @@ export function fetchBufferWithHeaders(
   return new Promise((resolve, reject) => {
     let redirects = 0;
 
-    function doGet(currentUrl: string) {
+    function doGet(currentUrl: string, profile = 0) {
       try {
         const parsed = new URL(currentUrl);
         const isHttps = parsed.protocol === 'https:';
@@ -463,7 +487,7 @@ export function fetchBufferWithHeaders(
             port: parsed.port || (isHttps ? 443 : 80),
             path: parsed.pathname + parsed.search,
             method: 'GET',
-            headers: getRequestHeaders(currentUrl, customRef),
+            headers: getRequestHeaders(currentUrl, customRef, profile),
             agent,
             timeout: timeoutMs,
           },
@@ -473,7 +497,12 @@ export function fetchBufferWithHeaders(
               if (redirects >= maxRedirects) return reject(new Error('Too many redirects'));
               redirects++;
               const nextUrl = new URL(res.headers.location, currentUrl).toString();
-              return doGet(nextUrl);
+              return doGet(nextUrl, profile);
+            }
+
+            if (res.statusCode === 403 && profile < 3) {
+              res.resume();
+              return doGet(currentUrl, profile + 1);
             }
 
             const chunks: Buffer[] = [];

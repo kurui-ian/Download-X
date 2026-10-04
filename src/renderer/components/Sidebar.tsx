@@ -125,9 +125,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex flex-col flex-1 overflow-y-auto p-3.5 space-y-4">
         {/* Minimalist Monochrome Brand Header */}
         <div className="flex items-center gap-2.5 px-2 py-1">
-          <div className="w-8 h-8 rounded-lg bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-sm">
-            <span className="font-mono font-black text-sm tracking-tighter">DX</span>
-          </div>
+          <img
+            src="./icon.png"
+            alt="DLX"
+            className="w-8 h-8 rounded-lg shadow-sm object-contain flex-shrink-0"
+          />
           <div>
             <h1 className="font-bold text-sm tracking-tight text-zinc-900 dark:text-white">DLX</h1>
             <p className="text-[10px] text-zinc-500 font-mono tracking-wider uppercase">Download Manager</p>

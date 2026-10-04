@@ -442,7 +442,7 @@ function classifyMediaNetworkResource(urlStr, contentType = '', requestType = ''
 }
 
 // Helper: Parse HLS master playlist in Service Worker to extract quality variants
-async function probeHlsVariantsInBackground(m3u8Url, tabId) {
+async function probeHlsVariantsInBackground(m3u8Url, tabId, parentReferrer = '') {
   try {
     const res = await fetch(m3u8Url, { credentials: 'include' });
     if (!res.ok) return;
@@ -515,6 +515,7 @@ async function probeHlsVariantsInBackground(m3u8Url, tabId) {
           width: width || undefined,
           height: height || undefined,
           bandwidth: bandwidth || undefined,
+          referrer: parentReferrer || undefined,
           isHls: true,
           updatedAt: Date.now(),
         };
@@ -578,19 +579,27 @@ chrome.webRequest.onHeadersReceived.addListener(
       return;
     }
 
+    const requestInitiator =
+      details.documentUrl ||
+      (details.initiator && details.initiator.startsWith('http') ? `${details.initiator}/` : '');
+
     (async () => {
       try {
         const key = `net_meta_${details.tabId}`;
         const stored = await chrome.storage.session.get(key);
         const mapObj = (stored && stored[key]) || {};
+        const existingEntry = mapObj[details.url] || {};
+        const effectiveRef = existingEntry.referrer || requestInitiator || undefined;
 
         mapObj[details.url] = {
+          ...existingEntry,
           url: details.url,
           mimeType: classified.effectiveMime,
           fileSize: classified.isHls ? 0 : totalSize,
           mediaType: classified.mediaType,
           format: classified.format,
-          quality: classified.quality,
+          quality: existingEntry.quality || classified.quality,
+          referrer: effectiveRef,
           isHls: Boolean(classified.isHls),
           updatedAt: Date.now(),
         };
@@ -610,7 +619,7 @@ chrome.webRequest.onHeadersReceived.addListener(
         }).catch(() => {});
 
         if (classified.isHls) {
-          probeHlsVariantsInBackground(details.url, details.tabId);
+          probeHlsVariantsInBackground(details.url, details.tabId, effectiveRef);
         }
 
         // If it's a video or audio stream, also refresh merged badge count
@@ -683,14 +692,20 @@ async function buildMergedTabMedia(tabId) {
     if (Array.isArray(item.videoOptions)) {
       for (const vo of item.videoOptions) {
         if (vo && vo.url && !vo.url.startsWith('blob:')) {
-          allNetVideoMap.set(vo.url, vo);
+          allNetVideoMap.set(vo.url, {
+            ...vo,
+            referrer: vo.referrer || item.sourcePageUrl || undefined,
+          });
         }
       }
     }
     if (Array.isArray(item.audioOptions)) {
       for (const ao of item.audioOptions) {
         if (ao && ao.url && !ao.url.startsWith('blob:')) {
-          allNetAudioMap.set(ao.url, ao);
+          allNetAudioMap.set(ao.url, {
+            ...ao,
+            referrer: ao.referrer || item.sourcePageUrl || undefined,
+          });
         }
       }
     }
@@ -699,7 +714,8 @@ async function buildMergedTabMedia(tabId) {
   for (const meta of Object.values(netMeta)) {
     if (!meta || !meta.url || meta.url.startsWith('blob:')) continue;
     if (meta.mediaType === 'video' && settings.detectVideos !== false) {
-      if (!allNetVideoMap.has(meta.url)) {
+      const existingVo = allNetVideoMap.get(meta.url);
+      if (!existingVo) {
         allNetVideoMap.set(meta.url, {
           url: meta.url,
           quality: meta.quality || 'Original',
@@ -709,9 +725,12 @@ async function buildMergedTabMedia(tabId) {
           width: meta.width || undefined,
           height: meta.height || undefined,
           bandwidth: meta.bandwidth || undefined,
+          referrer: meta.referrer || undefined,
           isHls: Boolean(meta.isHls),
           kind: 'video',
         });
+      } else if (!existingVo.referrer && meta.referrer) {
+        existingVo.referrer = meta.referrer;
       }
     } else if (meta.mediaType === 'audio' && settings.detectAudio !== false) {
       if (!allNetAudioMap.has(meta.url)) {
@@ -721,6 +740,7 @@ async function buildMergedTabMedia(tabId) {
           format: meta.format || 'MP3',
           mimeType: meta.mimeType || 'audio/mpeg',
           fileSize: meta.fileSize || 0,
+          referrer: meta.referrer || undefined,
           kind: 'audio',
         });
       }
@@ -787,6 +807,9 @@ async function buildMergedTabMedia(tabId) {
         vidItem.format = bestOpt.format || 'MP4';
         vidItem.mimeType = bestOpt.mimeType || 'video/mp4';
         vidItem.fileSize = bestOpt.fileSize || vidItem.fileSize || 0;
+        if (bestOpt.referrer) {
+          vidItem.referrer = bestOpt.referrer;
+        }
         vidItem.protected = false;
         vidItem.protectedMessage = '';
       }
@@ -821,7 +844,8 @@ async function buildMergedTabMedia(tabId) {
       audioOptions: sharedAudioOpts,
       imageOptions: [],
       thumbnailOptions: [],
-      sourcePageUrl: fallbackPageUrl,
+      referrer: bestOpt.referrer || fallbackPageUrl,
+      sourcePageUrl: bestOpt.referrer || fallbackPageUrl,
       sourcePageTitle: fallbackPageTitle,
     });
   }
@@ -1000,6 +1024,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             mapObj[message.stream.url] = {
               ...(mapObj[message.stream.url] || {}),
               ...message.stream,
+              referrer: (sender && sender.url) || message.stream.referrer || (mapObj[message.stream.url] && mapObj[message.stream.url].referrer),
               updatedAt: Date.now(),
             };
             await chrome.storage.session.set({ [key]: mapObj });

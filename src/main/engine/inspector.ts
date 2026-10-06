@@ -51,6 +51,7 @@ export function normalizeUrl(rawUrl: string): string {
   }
 }
 
+export const YT_VISIONOS_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 export const YT_ANDROID_UA = 'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip';
 export const YT_IOS_UA = 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)';
 
@@ -60,8 +61,9 @@ export function getRequestHeaders(
   profile: number = 0
 ): http.OutgoingHttpHeaders {
   if (targetUrl.includes('googlevideo.com')) {
+    const isVisionOs = targetUrl.includes('c=VISIONOS');
     const isIos = targetUrl.includes('c=IOS');
-    const ua = isIos ? YT_IOS_UA : YT_ANDROID_UA;
+    const ua = isVisionOs ? YT_VISIONOS_UA : isIos ? YT_IOS_UA : YT_ANDROID_UA;
     const gvHeaders: http.OutgoingHttpHeaders = {
       'User-Agent': ua,
       'Accept': '*/*',
@@ -126,7 +128,7 @@ export function getRequestHeaders(
 }
 
 export function isOneTimeOrSignedUrl(urlStr: string): boolean {
-  if (urlStr.includes('.m3u8') || urlStr.includes('__DLX_SEG_')) {
+  if (urlStr.includes('.m3u8') || urlStr.includes('__DLX_SEG_') || urlStr.includes('c=VISIONOS')) {
     return false;
   }
   try {
@@ -178,20 +180,47 @@ export function sanitizeFileName(name: string): string {
   return cleanFileNameString(name);
 }
 
+export function cleanSourcePageTitle(rawTitle: string): string {
+  if (!rawTitle || typeof rawTitle !== 'string') return '';
+  let cleaned = rawTitle
+    .replace(/^\(\d+\)\s*/, '') // Strip leading notification counts like "(348) "
+    .replace(
+      /\s*[-|–—•·]\s*(YouTube|YouTube Music|Vimeo|Dailymotion|Twitch|TikTok|Facebook|Instagram|X|Twitter|Reddit|Bilibili|SoundCloud)$/i,
+      ''
+    )
+    .trim();
+  if (!cleaned) {
+    cleaned = rawTitle.replace(/^\(\d+\)\s*/, '').trim();
+  }
+  return cleanFileNameString(cleaned);
+}
+
 export function isNumericOrHashOnly(name: string): boolean {
   const stem = path.basename(name, path.extname(name)).toLowerCase().trim();
   if (!stem) return true;
+  // Strip any trailing quality tag like " (360p)" or " (1080p)" or " (1)" when checking if base stem is generic
+  const baseStem = stem.replace(/(\s*\([^)]*\))+$/g, '').trim();
+  if (!baseStem) return true;
   // Purely digits like 17382910482
-  if (/^\d+$/.test(stem)) return true;
-  // Pure hex hash like a9b8c7d6e5f4a3b2 or md5/sha
-  if (/^[0-9a-f]{16,}$/i.test(stem)) return true;
+  if (/^\d+$/.test(baseStem)) return true;
+  // Pure hex hash like a9b8c7d6e5f4a3b2 or UUID
+  if (/^[0-9a-f]{12,}$/i.test(baseStem)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(baseStem)) return true;
+  // Auto-generated fallback names like download_1791141211662, video_12345, stream_123, etc.
+  if (
+    /^(download|downloads|video|audio|media|stream|file|track|playback|videoplayback|master|playlist|manifest|output|index|chunk|segment|clip|movie)([_-][a-z0-9]+)?$/i.test(
+      baseStem
+    )
+  ) {
+    return true;
+  }
   // Generic download keywords
   const genericWords = [
     'tunnel', 'stream', 'download', 'downloads', 'file', 'get', 'videoplayback', 
     'playback', 'video', 'audio', 'media', 'play', 'output', 'index', 'track',
-    'master', 'playlist', 'manifest', 'embed', 'player'
+    'master', 'playlist', 'manifest', 'embed', 'player', 'watch', 'default'
   ];
-  if (genericWords.includes(stem)) return true;
+  if (genericWords.includes(baseStem)) return true;
   return false;
 }
 
@@ -353,6 +382,52 @@ function probeYouTubeStreamSize(urlStr: string, ua: string): Promise<number> {
   });
 }
 
+let cachedYtVisitorData = '';
+let cachedYtVisitorDataTime = 0;
+
+async function fetchYouTubeVisitorData(): Promise<string> {
+  const now = Date.now();
+  if (cachedYtVisitorData && now - cachedYtVisitorDataTime < 10 * 60 * 1000) {
+    return cachedYtVisitorData;
+  }
+  return new Promise((resolve) => {
+    try {
+      const req = https.get(
+        'https://www.youtube.com/sw.js_data',
+        {
+          headers: {
+            'User-Agent': YT_VISIONOS_UA,
+            'Accept': '*/*',
+          },
+          timeout: 4500,
+        },
+        (res) => {
+          let raw = '';
+          res.on('data', (c) => (raw += c));
+          res.on('end', () => {
+            const m = raw.match(/Cgt[a-zA-Z0-9_%-]{15,}/);
+            if (m && m[0]) {
+              cachedYtVisitorData = m[0];
+              cachedYtVisitorDataTime = Date.now();
+              resolve(m[0]);
+            } else {
+              resolve(cachedYtVisitorData || '');
+            }
+          });
+          res.on('error', () => resolve(cachedYtVisitorData || ''));
+        }
+      );
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(cachedYtVisitorData || '');
+      });
+      req.on('error', () => resolve(cachedYtVisitorData || ''));
+    } catch {
+      resolve(cachedYtVisitorData || '');
+    }
+  });
+}
+
 export async function resolveYouTubeStream(
   urlOrVideoId: string,
   preferredQuality?: string,
@@ -366,14 +441,15 @@ export async function resolveYouTubeStream(
 
   if (!videoId) return null;
 
-  // Check if urlOrVideoId has dlx_quality param or itag param
+  // Check if urlOrVideoId or fallbackUrlForId has dlx_quality param or itag param
   let effectiveQuality = (preferredQuality || '').trim();
   let effectiveMime = (preferredMime || '').trim().toLowerCase();
-  try {
-    if (urlOrVideoId.startsWith('http')) {
-      const u = new URL(urlOrVideoId);
+  for (const candidateUrl of [urlOrVideoId, fallbackUrlForId]) {
+    if (!candidateUrl || !candidateUrl.startsWith('http')) continue;
+    try {
+      const u = new URL(candidateUrl);
       const dlxQ = u.searchParams.get('dlx_quality');
-      if (dlxQ) effectiveQuality = dlxQ;
+      if (dlxQ && !effectiveQuality) effectiveQuality = dlxQ;
       const itagParam = parseInt(u.searchParams.get('itag') || '0', 10);
       if ([139, 140, 249, 250, 251].includes(itagParam)) {
         effectiveMime = 'audio/mp4';
@@ -383,10 +459,22 @@ export async function resolveYouTubeStream(
         else if (itagParam === 135 || itagParam === 244) effectiveQuality = '480p';
         else if (itagParam === 134 || itagParam === 18) effectiveQuality = '360p';
       }
-    }
-  } catch {}
+    } catch {}
+  }
+
+  const visitorData = await fetchYouTubeVisitorData();
 
   const clients = [
+    {
+      name: 'VISIONOS',
+      version: '0.1',
+      ua: YT_VISIONOS_UA,
+      id: '101',
+      deviceMake: 'Apple',
+      deviceModel: 'RealityDevice14,1',
+      osName: 'visionOS',
+      osVersion: '1.3.21O771',
+    },
     {
       name: 'ANDROID',
       version: '20.10.38',
@@ -410,6 +498,31 @@ export async function resolveYouTubeStream(
 
   for (const client of clients) {
     try {
+      const clientContext: Record<string, any> = {
+        clientName: client.name,
+        clientVersion: client.version,
+        userAgent: client.ua,
+        osName: client.osName,
+        osVersion: client.osVersion,
+        androidSdkVersion: (client as any).androidSdkVersion,
+        deviceMake: (client as any).deviceMake,
+        deviceModel: (client as any).deviceModel,
+        hl: 'en',
+        gl: 'US',
+      };
+      if (visitorData) {
+        clientContext.visitorData = visitorData;
+      }
+
+      const extraHeaders: http.OutgoingHttpHeaders = {
+        'User-Agent': client.ua,
+        'X-YouTube-Client-Name': client.id,
+        'X-YouTube-Client-Version': client.version,
+      };
+      if (visitorData) {
+        extraHeaders['X-Goog-Visitor-Id'] = visitorData;
+      }
+
       const playerRes = await postInnertubeJson(
         'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
         {
@@ -417,25 +530,10 @@ export async function resolveYouTubeStream(
           contentCheckOk: true,
           racyCheckOk: true,
           context: {
-            client: {
-              clientName: client.name,
-              clientVersion: client.version,
-              userAgent: client.ua,
-              osName: client.osName,
-              osVersion: client.osVersion,
-              androidSdkVersion: (client as any).androidSdkVersion,
-              deviceMake: (client as any).deviceMake,
-              deviceModel: (client as any).deviceModel,
-              hl: 'en',
-              gl: 'US',
-            },
+            client: clientContext,
           },
         },
-        {
-          'User-Agent': client.ua,
-          'X-YouTube-Client-Name': client.id,
-          'X-YouTube-Client-Version': client.version,
-        }
+        extraHeaders
       );
 
       if (!playerRes || !playerRes.streamingData) continue;
@@ -455,26 +553,6 @@ export async function resolveYouTubeStream(
         : [];
 
       if (muxedFormats.length === 0 && adaptiveFormats.length === 0) continue;
-
-      // Prefer ratebypass=yes muxed format (e.g. ANDROID itag 18) for videos > 40s because GVS enforces PO-Token
-      // after ~45s on non-ratebypass adaptive streams, whereas ratebypass=yes streams download 100% without 403.
-      const rateBypassMuxed = muxedFormats.find((f) => String(f.url).includes('ratebypass=yes')) || muxedFormats[0];
-      if (rateBypassMuxed && (lengthSeconds === 0 || lengthSeconds > 40)) {
-        let fSize = parseInt(rateBypassMuxed.contentLength || '0', 10) || 0;
-        if (!fSize) {
-          fSize = await probeYouTubeStreamSize(rateBypassMuxed.url, client.ua);
-        }
-        return {
-          videoId,
-          title,
-          primaryUrl: rateBypassMuxed.url,
-          mimeType: 'video/mp4',
-          fileSize: fSize,
-          audioFileSize: 0,
-          quality: rateBypassMuxed.qualityLabel || '360p',
-          userAgent: client.ua,
-        };
-      }
 
       const qLower = effectiveQuality.toLowerCase();
       const wantsAudioOnly =
@@ -507,7 +585,7 @@ export async function resolveYouTubeStream(
         };
       }
 
-      // Determine target resolution height (for short clips <= 40s where adaptive formats do not trigger 45s GVS PO-Token cutoff)
+      // Determine target resolution height
       let targetHeight = 1080;
       if (qLower.includes('2160') || qLower.includes('4k')) targetHeight = 2160;
       else if (qLower.includes('1440')) targetHeight = 1440;
@@ -516,6 +594,26 @@ export async function resolveYouTubeStream(
       else if (qLower.includes('480') || qLower === 'large') targetHeight = 480;
       else if (qLower.includes('360') || qLower === 'medium') targetHeight = 360;
       else if (qLower.includes('240') || qLower === 'small') targetHeight = 240;
+
+      // Only use 360p muxed fallback if user explicitly requested <=360p AND a ratebypass muxed stream is available,
+      // OR if this is a non-VISIONOS fallback client on a long video where ANDROID/IOS adaptive streams might 403.
+      const rateBypassMuxed = muxedFormats.find((f) => String(f.url).includes('ratebypass=yes')) || muxedFormats[0];
+      if (rateBypassMuxed && client.name !== 'VISIONOS' && (lengthSeconds === 0 || lengthSeconds > 40)) {
+        let fSize = parseInt(rateBypassMuxed.contentLength || '0', 10) || 0;
+        if (!fSize) {
+          fSize = await probeYouTubeStreamSize(rateBypassMuxed.url, client.ua);
+        }
+        return {
+          videoId,
+          title,
+          primaryUrl: rateBypassMuxed.url,
+          mimeType: 'video/mp4',
+          fileSize: fSize,
+          audioFileSize: 0,
+          quality: rateBypassMuxed.qualityLabel || '360p',
+          userAgent: client.ua,
+        };
+      }
 
       const mp4Videos = adaptiveFormats
         .filter((f) => {
@@ -849,12 +947,12 @@ export function fetchBufferWithHeaders(
               return doGet(nextUrl, profile);
             }
 
-            if (res.statusCode === 403 && profile < 3) {
+            if (res.statusCode && res.statusCode >= 400 && profile < 3) {
               res.resume();
               return doGet(currentUrl, profile + 1);
             }
 
-            if (res.statusCode === 403 && profile >= 3) {
+            if (res.statusCode && res.statusCode >= 400 && profile >= 3) {
               res.resume();
               try {
                 // Fallback to Chromium's native network stack (electron.net.fetch) for Cloudflare/TLS checks
@@ -884,7 +982,7 @@ export function fetchBufferWithHeaders(
                       resolve({
                         buffer: buf,
                         finalUrl: netRes.url || currentUrl,
-                        statusCode: netRes.status || 403,
+                        statusCode: netRes.status || res.statusCode || 403,
                         headers: outHeaders,
                       });
                     })
@@ -892,7 +990,7 @@ export function fetchBufferWithHeaders(
                       resolve({
                         buffer: Buffer.alloc(0),
                         finalUrl: currentUrl,
-                        statusCode: 403,
+                        statusCode: res.statusCode || 403,
                         headers: res.headers,
                       });
                     });
@@ -1153,8 +1251,7 @@ export async function inspectUrl(targetUrl: string, maxRedirects = 8, referrer?:
       if (ytResolved) {
         const isAudio = ytResolved.mimeType.startsWith('audio/');
         const ext = isAudio ? 'm4a' : 'mp4';
-        const suffix = ytResolved.quality ? ` (${ytResolved.quality})` : '';
-        const fileName = sanitizeFileName(`${ytResolved.title}${suffix}.${ext}`);
+        const fileName = sanitizeFileName(`${ytResolved.title}.${ext}`);
         return {
           url: cleanUrl,
           finalUrl: ytResolved.primaryUrl,
@@ -1163,6 +1260,8 @@ export async function inspectUrl(targetUrl: string, maxRedirects = 8, referrer?:
           supportsRanges: true,
           mimeType: ytResolved.mimeType,
           category: isAudio ? 'audio' : 'video',
+          secondaryAudioUrl: ytResolved.secondaryAudioUrl,
+          quality: ytResolved.quality,
         };
       }
     } catch {}

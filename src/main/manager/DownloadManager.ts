@@ -14,7 +14,8 @@ import {
   extractYouTubeVideoId,
   fetchYouTubeTitle,
   ensureFileExtension,
-  isOneTimeOrSignedUrl
+  isOneTimeOrSignedUrl,
+  cleanSourcePageTitle
 } from '../engine/inspector';
 import { PersistenceStore } from './store';
 
@@ -60,34 +61,58 @@ export class DownloadManager {
       this.tasks.set(t.id, t);
     }
 
-    // Resolve titles for any existing tasks that were named generic or video_xxx
+    // Resolve titles for any existing tasks that were named generic or download_xxx / video_xxx
     setTimeout(async () => {
       let changed = false;
       for (const t of this.tasks.values()) {
-        const existingExt = path.extname(t.fileName) || path.extname(t.savePath);
+        const existingExt = path.extname(t.fileName) || path.extname(t.savePath) || (t.category === 'video' ? '.mp4' : '');
         if (isNumericOrHashOnly(t.fileName) || t.fileName.startsWith('video_') || t.fileName.startsWith('download_') || !path.extname(t.fileName)) {
-          const ytId = extractYouTubeVideoId(t.finalUrl || t.url);
-          if (ytId) {
-            try {
-              const ytTitle = await fetchYouTubeTitle(ytId);
-              if (ytTitle) {
-                let newName = ensureFileExtension(ytTitle, t.mimeType || '', t.finalUrl || t.url);
-                if (!path.extname(newName) && existingExt) {
-                  newName = `${newName}${existingExt}`;
+          let resolvedTitle = '';
+          if (t.sourcePageTitle) {
+            const cleaned = cleanSourcePageTitle(t.sourcePageTitle);
+            if (cleaned && !isNumericOrHashOnly(cleaned)) {
+              resolvedTitle = cleaned;
+            }
+          }
+          if (!resolvedTitle) {
+            const ytId =
+              extractYouTubeVideoId(t.finalUrl || t.url) ||
+              (t.sourcePageUrl ? extractYouTubeVideoId(t.sourcePageUrl) : null) ||
+              (t.referrer ? extractYouTubeVideoId(t.referrer) : null);
+            if (ytId) {
+              try {
+                const ytTitle = await fetchYouTubeTitle(ytId);
+                if (ytTitle) {
+                  resolvedTitle = ytTitle;
                 }
-                const oldPath = t.savePath;
-                const newPath = path.join(path.dirname(oldPath), newName);
-                if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {
-                  try {
-                    fs.renameSync(oldPath, newPath);
-                  } catch {}
-                }
-                t.fileName = newName;
-                t.savePath = newPath;
-                t.category = categorizeFileName(newName, t.mimeType || '', t.finalUrl || t.url);
-                changed = true;
-              }
-            } catch {}
+              } catch {}
+            }
+          }
+
+          if (resolvedTitle) {
+            let newName = ensureFileExtension(resolvedTitle, t.mimeType || '', t.finalUrl || t.url);
+            if (!path.extname(newName) && existingExt) {
+              newName = `${newName}${existingExt}`;
+            }
+            const oldPath = t.savePath;
+            const saveDir = path.dirname(oldPath);
+            let newPath = path.join(saveDir, newName);
+            const ext = path.extname(newName);
+            const base = path.basename(newName, ext);
+            let counter = 1;
+            while (fs.existsSync(newPath) && newPath !== oldPath) {
+              newPath = path.join(saveDir, `${base} (${counter})${ext}`);
+              counter++;
+            }
+            if (fs.existsSync(oldPath) && oldPath !== newPath) {
+              try {
+                fs.renameSync(oldPath, newPath);
+              } catch {}
+            }
+            t.fileName = path.basename(newPath);
+            t.savePath = newPath;
+            t.category = categorizeFileName(t.fileName, t.mimeType || '', t.finalUrl || t.url);
+            changed = true;
           }
         }
         const expectedCat = t.protocol === 'torrent' ? 'torrent' : categorizeFileName(t.fileName, t.mimeType || '', t.finalUrl || t.url);
@@ -176,7 +201,7 @@ export class DownloadManager {
 
     // Determine initial fileName smartly
     let initialFileName = params.fileName ? sanitizeFileName(params.fileName) : '';
-    if (!initialFileName) {
+    if (!initialFileName || isNumericOrHashOnly(initialFileName)) {
       if (isTorrent) {
         const dnMatch = cleanUrl.match(/dn=([^&]+)/i);
         if (dnMatch) {
@@ -187,27 +212,45 @@ export class DownloadManager {
           initialFileName = `Torrent_${Date.now()}`;
         }
       } else {
-        initialFileName = extractFileNameFromUrl(cleanUrl);
+        const extracted = extractFileNameFromUrl(cleanUrl);
+        if (!initialFileName || !isNumericOrHashOnly(extracted)) {
+          initialFileName = extracted;
+        }
       }
     }
 
-    if (!isTorrent && params.mimeType) {
-      initialFileName = ensureFileExtension(initialFileName, params.mimeType, cleanUrl);
-    }
-
-    // Check YouTube video title fallback if name is still numeric or generic
-    if (!isTorrent) {
-      const ytId = extractYouTubeVideoId(cleanUrl) || (params.sourcePageUrl ? extractYouTubeVideoId(params.sourcePageUrl) : null);
-      if (ytId && isNumericOrHashOnly(initialFileName)) {
+    // Check YouTube video title or sourcePageTitle fallback if name is still numeric or generic
+    if (!isTorrent && (!initialFileName || isNumericOrHashOnly(initialFileName))) {
+      const ytId =
+        extractYouTubeVideoId(cleanUrl) ||
+        (params.sourcePageUrl ? extractYouTubeVideoId(params.sourcePageUrl) : null) ||
+        (params.referrer ? extractYouTubeVideoId(params.referrer) : null);
+      if (ytId) {
         try {
           const ytTitle = await fetchYouTubeTitle(ytId);
           if (ytTitle) {
-            initialFileName = ensureFileExtension(ytTitle, params.mimeType || '', cleanUrl);
+            initialFileName = ensureFileExtension(ytTitle, params.mimeType || 'video/mp4', cleanUrl);
           }
         } catch {}
-      } else if (params.sourcePageTitle && isNumericOrHashOnly(initialFileName)) {
-        initialFileName = ensureFileExtension(sanitizeFileName(params.sourcePageTitle), params.mimeType || '', cleanUrl);
       }
+      if ((!initialFileName || isNumericOrHashOnly(initialFileName)) && params.sourcePageTitle) {
+        const cleanedTitle = cleanSourcePageTitle(params.sourcePageTitle);
+        if (cleanedTitle && !isNumericOrHashOnly(cleanedTitle)) {
+          initialFileName = ensureFileExtension(
+            cleanedTitle,
+            params.mimeType || (params.mediaType === 'video' ? 'video/mp4' : ''),
+            cleanUrl
+          );
+        }
+      }
+    }
+
+    if (!isTorrent && (params.mimeType || params.mediaType === 'video')) {
+      initialFileName = ensureFileExtension(
+        initialFileName,
+        params.mimeType || (params.mediaType === 'video' ? 'video/mp4' : ''),
+        cleanUrl
+      );
     }
 
     if (!initialFileName) {

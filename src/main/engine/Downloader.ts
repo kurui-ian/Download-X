@@ -16,6 +16,10 @@ import {
   fetchBufferWithHeaders,
   keepAliveHttpAgent,
   keepAliveHttpsAgent,
+  isNumericOrHashOnly,
+  ensureFileExtension,
+  sanitizeFileName,
+  cleanSourcePageTitle,
 } from './inspector';
 import { muxFmp4VideoAndAudio } from './fmp4Muxer';
 
@@ -124,7 +128,7 @@ export class Downloader extends EventEmitter {
         isYouTubeTask &&
         (!targetUrl.includes('googlevideo.com') ||
           targetUrl.includes('c=WEB') ||
-          !targetUrl.includes('ratebypass=yes') ||
+          (!targetUrl.includes('c=VISIONOS') && !targetUrl.includes('ratebypass=yes')) ||
           this.task.downloadedBytes === 0)
       ) {
         const ytSource =
@@ -137,15 +141,22 @@ export class Downloader extends EventEmitter {
           ytSource,
           this.task.quality,
           this.task.mimeType,
-          targetUrl
+          this.task.url || targetUrl
         );
         if (ytResolved && ytResolved.primaryUrl) {
           this.task.finalUrl = ytResolved.primaryUrl;
           targetUrl = ytResolved.primaryUrl;
+          if (ytResolved.quality) {
+            this.task.quality = ytResolved.quality;
+          }
           if (ytResolved.secondaryAudioUrl) {
             (this.task as any).secondaryAudioUrl = ytResolved.secondaryAudioUrl;
           } else {
             delete (this.task as any).secondaryAudioUrl;
+          }
+          if (ytResolved.title && isNumericOrHashOnly(this.task.fileName)) {
+            const resolvedExt = ytResolved.mimeType?.startsWith('audio/') ? '.m4a' : '.mp4';
+            this.attemptRename(sanitizeFileName(`${ytResolved.title}${resolvedExt}`), true);
           }
           const primaryBytes =
             ytResolved.fileSize > 0
@@ -155,13 +166,25 @@ export class Downloader extends EventEmitter {
             this.task.fileSize = primaryBytes;
           }
           this.task.supportsRanges = true;
-          this.task.threadCount = 1;
+          this.task.threadCount = targetUrl.includes('c=VISIONOS') && primaryBytes > 0 ? 8 : 1;
           this.task.downloadedBytes = 0;
           this.task.chunks = [];
         }
       }
 
-      if (targetUrl.includes('googlevideo.com')) {
+      // If filename is still generic (e.g. videoplayback.mp4 or download_xxx) and we have sourcePageTitle, apply it
+      if (isNumericOrHashOnly(this.task.fileName) && this.task.sourcePageTitle) {
+        const cleanedPageTitle = cleanSourcePageTitle(this.task.sourcePageTitle);
+        if (cleanedPageTitle && !isNumericOrHashOnly(cleanedPageTitle)) {
+          const currentExt = path.extname(this.task.fileName);
+          const withExt = currentExt
+            ? `${cleanedPageTitle}${currentExt}`
+            : ensureFileExtension(cleanedPageTitle, this.task.mimeType || 'video/mp4', targetUrl);
+          this.attemptRename(withExt, true);
+        }
+      }
+
+      if (targetUrl.includes('googlevideo.com') && !targetUrl.includes('c=VISIONOS')) {
         this.task.threadCount = 1;
       }
 
@@ -192,7 +215,7 @@ export class Downloader extends EventEmitter {
       if (isHls) {
         await this.downloadHlsStream();
       } else if (
-        targetUrl.includes('googlevideo.com') ||
+        (targetUrl.includes('googlevideo.com') && !targetUrl.includes('c=VISIONOS')) ||
         isOneTimeOrSignedUrl(targetUrl) ||
         !this.task.supportsRanges ||
         this.task.chunks.length <= 1
@@ -254,8 +277,26 @@ export class Downloader extends EventEmitter {
     this.task.chunks = chunks;
   }
 
-  private attemptRename(betterName: string): void {
+  private attemptRename(betterName: string, force: boolean = false): void {
     if (!betterName || betterName === this.task.fileName || this.isPaused || this.isCancelled) return;
+
+    // Never overwrite a filename with a generic/numeric/hash fallback (e.g. download_1791141211662.mp4 or videoplayback.mp4)
+    if (isNumericOrHashOnly(betterName)) {
+      return;
+    }
+
+    // If the task already has a meaningful non-generic filename, preserve it!
+    // Only append the extension if the existing filename had no extension.
+    if (!force && !isNumericOrHashOnly(this.task.fileName)) {
+      const currentExt = path.extname(this.task.fileName);
+      const betterExt = path.extname(betterName);
+      if (!currentExt && betterExt) {
+        betterName = `${this.task.fileName}${betterExt}`;
+      } else {
+        return;
+      }
+    }
+
     const saveDir = path.dirname(this.task.savePath);
     let newPath = path.join(saveDir, betterName);
 
@@ -892,6 +933,113 @@ export class Downloader extends EventEmitter {
 
   private isCompleting: boolean = false;
 
+  private async downloadSecondaryAudioBuffer(audioUrl: string): Promise<Buffer> {
+    let totalBytes = 0;
+    try {
+      const parsed = new URL(audioUrl);
+      const clen = parseInt(parsed.searchParams.get('clen') || '0', 10);
+      if (!isNaN(clen) && clen > 0) {
+        totalBytes = clen;
+      }
+    } catch {}
+
+    if (totalBytes > 256 * 1024) {
+      // Download in parallel 1.5MB Range chunks to bypass YouTube single-stream speed throttling
+      const chunkSize = 1536 * 1024;
+      const numChunks = Math.ceil(totalBytes / chunkSize);
+      const buffers: Buffer[] = new Array(numChunks);
+      let nextIdx = 0;
+      const concurrency = Math.min(4, numChunks);
+
+      const fetchRangePart = (start: number, end: number): Promise<Buffer> => {
+        return new Promise((resolve, reject) => {
+          const doReq = (urlStr: string, redirects = 0) => {
+            if (this.isPaused || this.isCancelled) return reject(new Error('Cancelled'));
+            try {
+              const p = new URL(urlStr);
+              const isHttps = p.protocol === 'https:';
+              const client = isHttps ? https : http;
+              const agent = isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent;
+              const headers = getRequestHeaders(urlStr, { Range: `bytes=${start}-${end}` });
+
+              const req = client.request(
+                {
+                  protocol: p.protocol,
+                  hostname: p.hostname,
+                  port: p.port || (isHttps ? 443 : 80),
+                  path: p.pathname + p.search,
+                  method: 'GET',
+                  headers,
+                  agent,
+                  timeout: 20000,
+                },
+                (res) => {
+                  if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    res.resume();
+                    if (redirects >= 5) return reject(new Error('Too many redirects'));
+                    return doReq(new URL(res.headers.location, urlStr).toString(), redirects + 1);
+                  }
+                  if (!res.statusCode || res.statusCode >= 400) {
+                    res.resume();
+                    return reject(new Error(`Audio range HTTP ${res.statusCode}`));
+                  }
+                  const parts: Buffer[] = [];
+                  res.on('data', (c: Buffer) => {
+                    parts.push(c);
+                    if (!this.isPaused && !this.isCancelled) {
+                      this.task.downloadedBytes += c.length;
+                      if (this.task.downloadedBytes > this.task.fileSize) {
+                        this.task.fileSize = this.task.downloadedBytes;
+                      }
+                    }
+                  });
+                  res.on('end', () => resolve(Buffer.concat(parts)));
+                  res.on('error', reject);
+                }
+              );
+              req.on('timeout', () => req.destroy(new Error('Audio range timeout')));
+              req.on('error', reject);
+              req.end();
+            } catch (err) {
+              reject(err);
+            }
+          };
+          doReq(audioUrl);
+        });
+      };
+
+      try {
+        const workers = Array.from({ length: concurrency }, async () => {
+          while (nextIdx < numChunks && !this.isPaused && !this.isCancelled) {
+            const idx = nextIdx++;
+            const start = idx * chunkSize;
+            const end = Math.min(totalBytes - 1, (idx + 1) * chunkSize - 1);
+            buffers[idx] = await fetchRangePart(start, end);
+          }
+        });
+        await Promise.all(workers);
+        if (!this.isPaused && !this.isCancelled && buffers.every((b) => b && b.length > 0)) {
+          return Buffer.concat(buffers);
+        }
+      } catch {}
+    }
+
+    const fallbackResp = await fetchBufferWithHeaders(
+      audioUrl,
+      this.task.referrer,
+      6,
+      60000,
+      (chunkLen) => {
+        if (this.isPaused || this.isCancelled) return;
+        this.task.downloadedBytes += chunkLen;
+        if (this.task.downloadedBytes > this.task.fileSize) {
+          this.task.fileSize = this.task.downloadedBytes;
+        }
+      }
+    );
+    return fallbackResp.statusCode < 400 ? fallbackResp.buffer : Buffer.alloc(0);
+  }
+
   private async completeDownload(): Promise<void> {
     if (this.isPaused || this.isCancelled || this.isCompleting) return;
     this.isCompleting = true;
@@ -910,25 +1058,13 @@ export class Downloader extends EventEmitter {
         const audioTempPath = `${this.task.savePath}.audio.tmp`;
         try {
           const baseBytes = this.task.downloadedBytes;
-          const audioResp = await fetchBufferWithHeaders(
-            audioUrl,
-            this.task.referrer,
-            6,
-            60000,
-            (chunkLen) => {
-              if (this.isPaused || this.isCancelled) return;
-              this.task.downloadedBytes += chunkLen;
-              if (this.task.downloadedBytes > this.task.fileSize) {
-                this.task.fileSize = this.task.downloadedBytes;
-              }
-            }
-          );
+          const audioBuf = await this.downloadSecondaryAudioBuffer(audioUrl);
           if (this.isPaused || this.isCancelled) {
             this.isCompleting = false;
             return;
           }
-          if (audioResp.statusCode < 400 && audioResp.buffer.length > 0) {
-            fs.writeFileSync(audioTempPath, audioResp.buffer);
+          if (audioBuf && audioBuf.length > 0) {
+            fs.writeFileSync(audioTempPath, audioBuf);
             muxFmp4VideoAndAudio(this.task.savePath, audioTempPath, this.task.savePath);
           } else {
             this.task.downloadedBytes = baseBytes;

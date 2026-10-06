@@ -1,8 +1,15 @@
 import http from 'http';
+import path from 'path';
 import { BrowserWindow } from 'electron';
 import { DownloadManager } from '../manager/DownloadManager';
 import { PersistenceStore } from '../manager/store';
 import { validateBridgeMessage, MAX_MESSAGE_BYTES, ValidatedBridgeMessage } from './protocolValidation';
+import {
+  isNumericOrHashOnly,
+  cleanSourcePageTitle,
+  ensureFileExtension,
+  sanitizeFileName,
+} from '../engine/inspector';
 
 export const BRIDGE_PORT = 45789;
 export const BRIDGE_HOST = '127.0.0.1';
@@ -269,22 +276,28 @@ export class NativeBridgeServer {
 
         const settings = this.store.getSettings();
 
-        // 1. Build smart filename with quality if provided for media downloads
-        let effectiveFilename = msg.filename;
-        if (
-          msg.type === 'addMediaDownload' &&
-          effectiveFilename &&
-          msg.quality &&
-          msg.quality !== 'Original' &&
-          !effectiveFilename.toLowerCase().includes(msg.quality.toLowerCase())
-        ) {
-          const dotIdx = effectiveFilename.lastIndexOf('.');
-          if (dotIdx > 0) {
-            const stem = effectiveFilename.slice(0, dotIdx);
-            const ext = effectiveFilename.slice(dotIdx);
-            effectiveFilename = `${stem} (${msg.quality})${ext}`;
-          } else {
-            effectiveFilename = `${effectiveFilename} (${msg.quality})`;
+        // 1. Resolve clean default filename for video/media downloads
+        let effectiveFilename = msg.filename ? sanitizeFileName(msg.filename) : undefined;
+        if (effectiveFilename) {
+          const ext = path.extname(effectiveFilename);
+          const stem = path.basename(effectiveFilename, ext);
+          const cleanedStem = cleanSourcePageTitle(stem);
+          if (cleanedStem && !isNumericOrHashOnly(cleanedStem)) {
+            effectiveFilename = `${cleanedStem}${ext}`;
+          }
+        }
+
+        if ((!effectiveFilename || isNumericOrHashOnly(effectiveFilename)) && msg.sourcePageTitle) {
+          const cleanedTitle = cleanSourcePageTitle(msg.sourcePageTitle);
+          if (cleanedTitle && !isNumericOrHashOnly(cleanedTitle)) {
+            const existingExt = effectiveFilename ? path.extname(effectiveFilename) : '';
+            effectiveFilename = existingExt
+              ? `${cleanedTitle}${existingExt}`
+              : ensureFileExtension(
+                  cleanedTitle,
+                  msg.mimeType || (msg.mediaType === 'video' ? 'video/mp4' : ''),
+                  msg.url
+                );
           }
         }
 

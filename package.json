@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "DLX - Accelerated Multi-Part Desktop Download Manager",
   "main": "dist-electron/main/index.js",
-  "author": "DLX Team",
+  "author": "Kurui Ian Kipkemboi",
   "license": "MIT",
   "scripts": {
     "dev": "vite",
@@ -40,6 +40,7 @@
   "build": {
     "appId": "com.dlx.manager",
     "productName": "DLX",
+    "copyright": "Developed by Kurui Ian Kipkemboi",
     "npmRebuild": false,
     "directories": {
       "output": "release"

@@ -320,6 +320,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Settings className="w-3.5 h-3.5" />
           <span>Preferences</span>
         </button>
+
+        {/* Developer Attribution */}
+        <div className="pt-1.5 border-t border-zinc-200/70 dark:border-zinc-800/70 text-center">
+          <p className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 tracking-tight">
+            Developed by{' '}
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+              Kurui Ian Kipkemboi
+            </span>
+          </p>
+        </div>
       </div>
     </aside>
   );

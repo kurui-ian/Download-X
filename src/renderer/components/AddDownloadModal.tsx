@@ -167,7 +167,22 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       setInspection(result);
       setFileName((prev) => {
         const current = (prev || existingName || '').trim();
-        if (current) {
+        const isGeneric = (name: string) => {
+          const base = name
+            .replace(/\.[a-z0-9]{2,5}$/i, '')
+            .replace(/(\s*\([^)]*\))+$/g, '')
+            .trim();
+          return (
+            !base ||
+            /^\d+$/.test(base) ||
+            /^[0-9a-f]{12,}$/i.test(base) ||
+            /^(download|downloads|video|audio|media|stream|file|track|playback|videoplayback|master|playlist|manifest|output|index|chunk|segment)([_-][a-z0-9]+)?$/i.test(
+              base
+            )
+          );
+        };
+
+        if (current && !isGeneric(current)) {
           // If browser provided a title without an extension and inspection found an extension, append it
           const hasExt = /\.[a-z0-9]{2,5}$/i.test(current);
           const inspectedExtMatch = result.fileName ? result.fileName.match(/(\.[a-z0-9]{2,5})$/i) : null;
@@ -176,7 +191,28 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
           }
           return current;
         }
-        return result.fileName || '';
+
+        if (result.fileName && !isGeneric(result.fileName)) {
+          return result.fileName;
+        }
+
+        if (initialData?.sourcePageTitle) {
+          const cleanPageTitle = initialData.sourcePageTitle
+            .replace(/^\(\d+\)\s*/, '')
+            .replace(
+              /\s*[-|–—•·]\s*(YouTube|YouTube Music|Vimeo|Dailymotion|Twitch|TikTok|Facebook|Instagram|X|Twitter|Reddit|Bilibili|SoundCloud)$/i,
+              ''
+            )
+            .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+            .trim();
+          if (cleanPageTitle) {
+            const extMatch = (result.fileName || current).match(/(\.[a-z0-9]{2,5})$/i);
+            const ext = extMatch ? extMatch[1] : '.mp4';
+            return `${cleanPageTitle}${ext}`;
+          }
+        }
+
+        return current || result.fileName || '';
       });
     } catch (err: any) {
       if (!initialData?.source) {

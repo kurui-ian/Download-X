@@ -4,6 +4,34 @@ import EventEmitter from 'events';
 import { DownloadTask, TorrentFileInfo, UrlInspectionResult } from './types';
 import { categorizeFileName, sanitizeFileName } from './inspector';
 
+export const DEFAULT_PUBLIC_TRACKERS = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.demonii.com:1337/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://tracker.openbittorrent.com:6969/announce',
+  'udp://explodie.org:6969/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'udp://tracker1.bt.moack.co.kr:80/announce',
+  'udp://p4p.arenabg.com:1337/announce',
+  'udp://tracker.theoks.net:6969/announce',
+  'udp://tracker-udp.gbitt.info:80/announce',
+  'udp://opentracker.io:6969/announce',
+  'udp://retracker01-msk-virt.corbina.net:80/announce',
+  'udp://open.free-tracker.ga:6969/announce',
+  'udp://ns-1.x-fins.com:6969/announce',
+  'udp://isk.steal.cf:6969/announce',
+  'udp://ipv4.tracker.harry.lu:80/announce',
+  'http://tracker.opentrackr.org:1337/announce',
+  'http://tracker.openbittorrent.com:80/announce',
+  'https://tracker.tamersunion.org:443/announce',
+  'https://tracker.gbitt.info:443/announce',
+  'https://tracker.loligirl.cn:443/announce',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.btorrent.xyz',
+];
+
 export class TorrentEngine extends EventEmitter {
   private static instance: TorrentEngine | null = null;
   private client: any = null;
@@ -51,9 +79,16 @@ export class TorrentEngine extends EventEmitter {
         this.parseTorrentFn = ptModule.default || ptModule;
 
         this.client = new this.WebTorrentClass({
-          maxConns: 60,
+          maxConns: 200,
           dht: true,
+          lsd: true,
+          utPex: true,
           webSeeds: true,
+          utp: false,
+          secure: 0,
+          tracker: {
+            announce: DEFAULT_PUBLIC_TRACKERS,
+          },
           downloadLimit: this.speedLimitBytesPerSec > 0 ? this.speedLimitBytesPerSec : -1,
         });
 
@@ -210,7 +245,16 @@ export class TorrentEngine extends EventEmitter {
         } catch {}
       }
 
-      const torrent = this.client.add(torrentSource, { path: saveDir }, (t: any) => {
+      const torrentOpts = {
+        path: saveDir,
+        announce: DEFAULT_PUBLIC_TRACKERS,
+        strategy: 'rarest',
+        maxWebConns: 16,
+        storeCacheSlots: 128,
+        uploads: 20,
+      };
+
+      const torrent = this.client.add(torrentSource, torrentOpts, (t: any) => {
         if (this.isStopped(task)) {
           try {
             t.removeAllListeners();
@@ -226,6 +270,7 @@ export class TorrentEngine extends EventEmitter {
         task.infoHash = t.infoHash;
         task.fileSize = t.length || task.fileSize;
         task.savePath = path.join(saveDir, task.fileName);
+        task.peers = t.numPeers || 0;
         task.torrentFiles = (t.files || []).map((f: any) => ({
           name: f.name,
           path: f.path,
@@ -251,6 +296,17 @@ export class TorrentEngine extends EventEmitter {
           onProgress(task);
         }
       };
+
+      torrent.on('wire', (wire: any) => {
+        if (this.isStopped(task)) return;
+        try {
+          if (typeof wire.setTimeout === 'function') {
+            wire.setTimeout(20000);
+          }
+        } catch {}
+        task.peers = torrent.numPeers;
+        throttleProgress();
+      });
 
       torrent.on('download', () => {
         if (this.isStopped(task)) {

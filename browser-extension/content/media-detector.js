@@ -953,11 +953,12 @@
         const duration = formatDuration(videoEl.duration);
         const durationSeconds =
           Number.isFinite(videoEl.duration) && videoEl.duration > 0 ? Math.round(videoEl.duration) : 0;
-        const resHeight = videoEl.videoHeight || (videoOptions[0] && videoOptions[0].height) || 0;
-        const resolution =
-          videoEl.videoWidth && videoEl.videoHeight
-            ? `${videoEl.videoWidth} × ${videoEl.videoHeight}`
-            : heightToQualityLabel(resHeight) || (videoOptions[0] && videoOptions[0].quality) || 'Video';
+        const resHeight = (ytInfo ? 1080 : 0) || videoEl.videoHeight || (videoOptions[0] && videoOptions[0].height) || 0;
+        const resolution = ytInfo
+          ? '1080p Full HD'
+          : videoEl.videoWidth && videoEl.videoHeight
+          ? `${videoEl.videoWidth} × ${videoEl.videoHeight}`
+          : heightToQualityLabel(resHeight) || (videoOptions[0] && videoOptions[0].quality) || 'Video';
 
         const primaryOpt = videoOptions[0] || null;
         const format = (primaryOpt && primaryOpt.format) || inferFormatLabel(primaryUrl) || 'MP4';

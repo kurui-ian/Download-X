@@ -713,7 +713,7 @@ async function buildMergedTabMedia(tabId) {
   }
 
   for (const meta of Object.values(netMeta)) {
-    if (!meta || !meta.url || meta.url.startsWith('blob:')) continue;
+    if (!meta || !meta.url || meta.url.startsWith('blob:') || meta.url.includes('googlevideo.com/videoplayback')) continue;
     if (meta.mediaType === 'video' && settings.detectVideos !== false) {
       const existingVo = allNetVideoMap.get(meta.url);
       if (!existingVo) {

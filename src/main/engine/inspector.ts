@@ -17,6 +17,7 @@ export const keepAliveHttpsAgent = new https.Agent({
   keepAliveMsecs: 15000,
   maxSockets: 32,
   maxFreeSockets: 16,
+  rejectUnauthorized: false,
 });
 
 export function normalizeUrl(rawUrl: string): string {
@@ -40,8 +41,14 @@ export function normalizeUrl(rawUrl: string): string {
     let norm = `${parsed.protocol}//${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, '')}`;
     if (parsed.searchParams.has('v')) {
       norm += `?v=${parsed.searchParams.get('v')}`;
+      if (parsed.searchParams.has('dlx_quality')) {
+        norm += `&dlx_quality=${parsed.searchParams.get('dlx_quality')}`;
+      }
     } else if (parsed.searchParams.has('vid')) {
       norm += `?vid=${parsed.searchParams.get('vid')}`;
+      if (parsed.searchParams.has('dlx_quality')) {
+        norm += `&dlx_quality=${parsed.searchParams.get('dlx_quality')}`;
+      }
     } else if (parsed.search) {
       norm += parsed.search;
     }
@@ -128,7 +135,12 @@ export function getRequestHeaders(
 }
 
 export function isOneTimeOrSignedUrl(urlStr: string): boolean {
-  if (urlStr.includes('.m3u8') || urlStr.includes('__DLX_SEG_') || urlStr.includes('c=VISIONOS')) {
+  if (
+    urlStr.includes('.m3u8') ||
+    urlStr.includes('__DLX_SEG_') ||
+    urlStr.includes('c=VISIONOS') ||
+    (urlStr.includes('googlevideo.com') && urlStr.includes('gir=yes'))
+  ) {
     return false;
   }
   try {
@@ -218,7 +230,8 @@ export function isNumericOrHashOnly(name: string): boolean {
   const genericWords = [
     'tunnel', 'stream', 'download', 'downloads', 'file', 'get', 'videoplayback', 
     'playback', 'video', 'audio', 'media', 'play', 'output', 'index', 'track',
-    'master', 'playlist', 'manifest', 'embed', 'player', 'watch', 'default'
+    'master', 'playlist', 'manifest', 'embed', 'player', 'watch', 'default',
+    'youtube', 'vimeo', 'dailymotion', 'tiktok', 'instagram', 'facebook', 'twitter'
   ];
   if (genericWords.includes(baseStem)) return true;
   return false;
@@ -390,7 +403,7 @@ async function fetchYouTubeVisitorData(): Promise<string> {
   if (cachedYtVisitorData && now - cachedYtVisitorDataTime < 10 * 60 * 1000) {
     return cachedYtVisitorData;
   }
-  return new Promise((resolve) => {
+  const fromSw = await new Promise<string>((resolve) => {
     try {
       const req = https.get(
         'https://www.youtube.com/sw.js_data',
@@ -411,21 +424,56 @@ async function fetchYouTubeVisitorData(): Promise<string> {
               cachedYtVisitorDataTime = Date.now();
               resolve(m[0]);
             } else {
-              resolve(cachedYtVisitorData || '');
+              resolve('');
             }
           });
-          res.on('error', () => resolve(cachedYtVisitorData || ''));
+          res.on('error', () => resolve(''));
         }
       );
       req.on('timeout', () => {
         req.destroy();
-        resolve(cachedYtVisitorData || '');
+        resolve('');
       });
-      req.on('error', () => resolve(cachedYtVisitorData || ''));
+      req.on('error', () => resolve(''));
     } catch {
-      resolve(cachedYtVisitorData || '');
+      resolve('');
     }
   });
+  if (fromSw) return fromSw;
+
+  try {
+    const visRes = await postInnertubeJson(
+      'https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false',
+      {
+        context: {
+          client: {
+            clientName: 'VISIONOS',
+            clientVersion: '0.1',
+            userAgent: YT_VISIONOS_UA,
+            osName: 'visionOS',
+            osVersion: '1.3.21O771',
+            deviceMake: 'Apple',
+            deviceModel: 'RealityDevice14,1',
+            hl: 'en',
+            gl: 'US',
+          },
+        },
+      },
+      {
+        'User-Agent': YT_VISIONOS_UA,
+        'X-YouTube-Client-Name': '101',
+        'X-YouTube-Client-Version': '0.1',
+      }
+    );
+    const vd = visRes?.responseContext?.visitorData;
+    if (vd && typeof vd === 'string') {
+      cachedYtVisitorData = vd;
+      cachedYtVisitorDataTime = Date.now();
+      return vd;
+    }
+  } catch {}
+
+  return cachedYtVisitorData || '';
 }
 
 export async function resolveYouTubeStream(
@@ -462,7 +510,7 @@ export async function resolveYouTubeStream(
     } catch {}
   }
 
-  const visitorData = await fetchYouTubeVisitorData();
+  let visitorData = await fetchYouTubeVisitorData();
 
   const clients = [
     {
@@ -476,15 +524,6 @@ export async function resolveYouTubeStream(
       osVersion: '1.3.21O771',
     },
     {
-      name: 'ANDROID',
-      version: '20.10.38',
-      ua: YT_ANDROID_UA,
-      id: '3',
-      osName: 'Android',
-      osVersion: '14',
-      androidSdkVersion: 34,
-    },
-    {
       name: 'IOS',
       version: '20.10.4',
       ua: YT_IOS_UA,
@@ -494,7 +533,18 @@ export async function resolveYouTubeStream(
       osName: 'iPhone',
       osVersion: '18.3.2.22D82',
     },
+    {
+      name: 'ANDROID',
+      version: '20.10.38',
+      ua: YT_ANDROID_UA,
+      id: '3',
+      osName: 'Android',
+      osVersion: '14',
+      androidSdkVersion: 34,
+    },
   ];
+
+  let bestCandidate: { stream: ResolvedYouTubeStream; height: number } | null = null;
 
   for (const client of clients) {
     try {
@@ -536,6 +586,12 @@ export async function resolveYouTubeStream(
         extraHeaders
       );
 
+      if (playerRes?.responseContext?.visitorData && !visitorData) {
+        visitorData = playerRes.responseContext.visitorData;
+        cachedYtVisitorData = visitorData;
+        cachedYtVisitorDataTime = Date.now();
+      }
+
       if (!playerRes || !playerRes.streamingData) continue;
 
       const rawTitle =
@@ -543,7 +599,6 @@ export async function resolveYouTubeStream(
         (await fetchYouTubeTitle(videoId)) ||
         `youtube_${videoId}`;
       const title = cleanFileNameString(rawTitle);
-      const lengthSeconds = parseInt(playerRes.videoDetails?.lengthSeconds || '0', 10) || 0;
 
       const muxedFormats: any[] = Array.isArray(playerRes.streamingData.formats)
         ? playerRes.streamingData.formats.filter((f: any) => f && f.url)
@@ -562,7 +617,7 @@ export async function resolveYouTubeStream(
         qLower.includes('m4a') ||
         qLower.includes('mp3');
 
-      // Find best M4A audio track (itag 140 preferred for fMP4 compatibility)
+      // Find best M4A audio track (itag 140 preferred for fMP4/MP4 compatibility)
       const m4aAudios = adaptiveFormats
         .filter((f) => String(f.mimeType || '').toLowerCase().startsWith('audio/mp4'))
         .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
@@ -595,10 +650,9 @@ export async function resolveYouTubeStream(
       else if (qLower.includes('360') || qLower === 'medium') targetHeight = 360;
       else if (qLower.includes('240') || qLower === 'small') targetHeight = 240;
 
-      // Only use 360p muxed fallback if user explicitly requested <=360p AND a ratebypass muxed stream is available,
-      // OR if this is a non-VISIONOS fallback client on a long video where ANDROID/IOS adaptive streams might 403.
+      // Only use 360p muxed stream directly if user explicitly requested <= 360p
       const rateBypassMuxed = muxedFormats.find((f) => String(f.url).includes('ratebypass=yes')) || muxedFormats[0];
-      if (rateBypassMuxed && client.name !== 'VISIONOS' && (lengthSeconds === 0 || lengthSeconds > 40)) {
+      if (targetHeight <= 360 && rateBypassMuxed && (rateBypassMuxed.height || 360) === targetHeight) {
         let fSize = parseInt(rateBypassMuxed.contentLength || '0', 10) || 0;
         if (!fSize) {
           fSize = await probeYouTubeStreamSize(rateBypassMuxed.url, client.ua);
@@ -635,13 +689,14 @@ export async function resolveYouTubeStream(
         allMp4Videos[0];
 
       if (chosenVideo) {
+        const chosenHeight = chosenVideo.height || 0;
         const videoSize = parseInt(chosenVideo.contentLength || '0', 10) || 0;
         const audioSize = bestAudio ? parseInt(bestAudio.contentLength || '0', 10) || 0 : 0;
         const resolvedQuality =
           chosenVideo.qualityLabel ||
-          (chosenVideo.height ? `${chosenVideo.height}p` : effectiveQuality || '1080p');
+          (chosenHeight ? `${chosenHeight}p` : effectiveQuality || '1080p');
 
-        return {
+        const candidateStream: ResolvedYouTubeStream = {
           videoId,
           title,
           primaryUrl: chosenVideo.url,
@@ -652,29 +707,40 @@ export async function resolveYouTubeStream(
           quality: resolvedQuality,
           userAgent: client.ua,
         };
+
+        if (chosenHeight >= targetHeight) {
+          return candidateStream;
+        }
+        if (!bestCandidate || chosenHeight > bestCandidate.height) {
+          bestCandidate = { stream: candidateStream, height: chosenHeight };
+        }
+        continue;
       }
 
-      if (muxedFormats.length > 0) {
+      if (muxedFormats.length > 0 && !bestCandidate) {
         const muxed = muxedFormats[0];
         let fSize = parseInt(muxed.contentLength || '0', 10) || 0;
         if (!fSize) {
           fSize = await probeYouTubeStreamSize(muxed.url, client.ua);
         }
-        return {
-          videoId,
-          title,
-          primaryUrl: muxed.url,
-          mimeType: 'video/mp4',
-          fileSize: fSize,
-          audioFileSize: 0,
-          quality: muxed.qualityLabel || '360p',
-          userAgent: client.ua,
+        bestCandidate = {
+          height: muxed.height || 360,
+          stream: {
+            videoId,
+            title,
+            primaryUrl: muxed.url,
+            mimeType: 'video/mp4',
+            fileSize: fSize,
+            audioFileSize: 0,
+            quality: muxed.qualityLabel || '360p',
+            userAgent: client.ua,
+          },
         };
       }
     } catch {}
   }
 
-  return null;
+  return bestCandidate ? bestCandidate.stream : null;
 }
 
 export function ensureFileExtension(fileName: string, mimeType = '', rawUrl = ''): string {
@@ -1202,6 +1268,7 @@ async function estimateHlsFileSize(resolved: HlsResolvedPlaylist, referrer?: str
           path: parsed.pathname + parsed.search,
           method: 'HEAD',
           headers: getRequestHeaders(sampleUrl, customRef),
+          agent: isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent,
           timeout: 3000,
         },
         (res) => {
@@ -1330,6 +1397,7 @@ export async function inspectUrl(targetUrl: string, maxRedirects = 8, referrer?:
             path: parsed.pathname + parsed.search,
             method: 'HEAD',
             headers: getRequestHeaders(cleanUrl, customRefHeaders),
+            agent: isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent,
             timeout: 3000,
           },
           async (res) => {
@@ -1412,6 +1480,7 @@ export async function inspectUrl(targetUrl: string, maxRedirects = 8, referrer?:
             path: parsed.pathname + parsed.search,
             method: 'HEAD',
             headers: getRequestHeaders(urlToTest, customRefHeaders),
+            agent: isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent,
             timeout: 6000,
           },
           async (res) => {
@@ -1479,6 +1548,7 @@ export async function inspectUrl(targetUrl: string, maxRedirects = 8, referrer?:
             path: parsed.pathname + parsed.search,
             method: 'GET',
             headers: getRequestHeaders(urlToTest, { ...(customRefHeaders || {}), 'Range': 'bytes=0-1024' }),
+            agent: isHttps ? keepAliveHttpsAgent : keepAliveHttpAgent,
             timeout: 8000,
           },
           (res) => {

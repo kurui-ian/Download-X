@@ -757,9 +757,15 @@
     const filename = `${safeTitle}.${ext}`;
 
     // If video has a separate companion audio stream and user selected video, attach secondaryAudioUrl
-    const companionAudioUrl =
+    const rawCompanionAudio =
       opt.kind === 'video' && item.audioOptions && item.audioOptions.length > 0
         ? item.audioOptions[0].url
+        : undefined;
+    const companionAudioUrl =
+      rawCompanionAudio &&
+      !rawCompanionAudio.includes('youtube.com/watch') &&
+      !rawCompanionAudio.includes('youtu.be/')
+        ? rawCompanionAudio
         : undefined;
 
     const res = await chrome.runtime.sendMessage({
@@ -816,6 +822,11 @@
   mainTrigger.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (activeTargetEl && window.__dlxElementToItemId && window.__dlxDetectedMediaMap) {
+      const latestId = window.__dlxElementToItemId.get(activeTargetEl);
+      const latestItem = latestId ? window.__dlxDetectedMediaMap.get(latestId) : null;
+      if (latestItem) activeMediaItem = latestItem;
+    }
     if (!activeMediaItem) return;
 
     isPanelOpen = !isPanelOpen;
@@ -826,7 +837,7 @@
     updateOverlayPosition();
   });
 
-  // Detect hover over video / audio / qualifying image elements
+  // Detect hover over video / audio / qualifying image elements (including player overlay containers)
   document.addEventListener(
     'mouseover',
     (e) => {
@@ -834,7 +845,15 @@
       const target = e.target;
       if (!target || !target.closest) return;
 
-      const mediaEl = target.closest('video, audio, img');
+      let mediaEl = target.closest('video, audio, img');
+      if (!mediaEl) {
+        const playerContainer = target.closest(
+          '#movie_player, .html5-video-player, [data-media-container], .video-player, .player'
+        );
+        if (playerContainer) {
+          mediaEl = playerContainer.querySelector('video');
+        }
+      }
       if (!mediaEl || hiddenElements.has(mediaEl)) return;
 
       const elToId = window.__dlxElementToItemId;
@@ -908,6 +927,16 @@
       if (!showButtonSetting) {
         btnWrap.style.display = 'none';
         panelEl.style.display = 'none';
+      }
+    }
+    if (activeTargetEl && window.__dlxElementToItemId && window.__dlxDetectedMediaMap) {
+      const latestId = window.__dlxElementToItemId.get(activeTargetEl);
+      const latestItem = latestId ? window.__dlxDetectedMediaMap.get(latestId) : null;
+      if (latestItem) {
+        activeMediaItem = latestItem;
+        if (isPanelOpen) {
+          renderPanel(activeMediaItem);
+        }
       }
     }
   });

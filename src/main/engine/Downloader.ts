@@ -128,20 +128,23 @@ export class Downloader extends EventEmitter {
         isYouTubeTask &&
         (!targetUrl.includes('googlevideo.com') ||
           targetUrl.includes('c=WEB') ||
-          (!targetUrl.includes('c=VISIONOS') && !targetUrl.includes('ratebypass=yes')) ||
+          (!targetUrl.includes('c=VISIONOS') && !targetUrl.includes('gir=yes') && !targetUrl.includes('ratebypass=yes')) ||
           this.task.downloadedBytes === 0)
       ) {
         const ytSource =
-          this.task.sourcePageUrl && this.task.sourcePageUrl.includes('youtube.com')
+          this.task.url && (this.task.url.includes('youtube.com') || this.task.url.includes('youtu.be'))
+            ? this.task.url
+            : this.task.sourcePageUrl && this.task.sourcePageUrl.includes('youtube.com')
             ? this.task.sourcePageUrl
             : this.task.referrer && this.task.referrer.includes('youtube.com')
             ? this.task.referrer
             : targetUrl;
+        const ytFallback = this.task.sourcePageUrl || this.task.referrer || this.task.url || targetUrl;
         const ytResolved = await resolveYouTubeStream(
           ytSource,
           this.task.quality,
           this.task.mimeType,
-          this.task.url || targetUrl
+          ytFallback
         );
         if (ytResolved && ytResolved.primaryUrl) {
           this.task.finalUrl = ytResolved.primaryUrl;
@@ -154,7 +157,7 @@ export class Downloader extends EventEmitter {
           } else {
             delete (this.task as any).secondaryAudioUrl;
           }
-          if (ytResolved.title && isNumericOrHashOnly(this.task.fileName)) {
+          if (ytResolved.title && !isNumericOrHashOnly(ytResolved.title)) {
             const resolvedExt = ytResolved.mimeType?.startsWith('audio/') ? '.m4a' : '.mp4';
             this.attemptRename(sanitizeFileName(`${ytResolved.title}${resolvedExt}`), true);
           }
@@ -165,8 +168,9 @@ export class Downloader extends EventEmitter {
           if (primaryBytes > 0) {
             this.task.fileSize = primaryBytes;
           }
-          this.task.supportsRanges = true;
-          this.task.threadCount = targetUrl.includes('c=VISIONOS') && primaryBytes > 0 ? 8 : 1;
+          const isRangeCapableYt = targetUrl.includes('c=VISIONOS') || targetUrl.includes('gir=yes');
+          this.task.supportsRanges = isRangeCapableYt;
+          this.task.threadCount = isRangeCapableYt && primaryBytes > 0 ? 8 : 1;
           this.task.downloadedBytes = 0;
           this.task.chunks = [];
         }
@@ -184,7 +188,11 @@ export class Downloader extends EventEmitter {
         }
       }
 
-      if (targetUrl.includes('googlevideo.com') && !targetUrl.includes('c=VISIONOS')) {
+      if (
+        targetUrl.includes('googlevideo.com') &&
+        !targetUrl.includes('c=VISIONOS') &&
+        !targetUrl.includes('gir=yes')
+      ) {
         this.task.threadCount = 1;
       }
 
@@ -215,7 +223,9 @@ export class Downloader extends EventEmitter {
       if (isHls) {
         await this.downloadHlsStream();
       } else if (
-        (targetUrl.includes('googlevideo.com') && !targetUrl.includes('c=VISIONOS')) ||
+        (targetUrl.includes('googlevideo.com') &&
+          !targetUrl.includes('c=VISIONOS') &&
+          !targetUrl.includes('gir=yes')) ||
         isOneTimeOrSignedUrl(targetUrl) ||
         !this.task.supportsRanges ||
         this.task.chunks.length <= 1
@@ -1053,10 +1063,16 @@ export class Downloader extends EventEmitter {
       this.closeFileDescriptor();
 
       // If this video has a companion audio stream (e.g. YouTube 1080p/720p/480p adaptive fMP4), download & mux it
-      const audioUrl = (this.task as any).secondaryAudioUrl;
+      let audioUrl = (this.task as any).secondaryAudioUrl;
       if (audioUrl && typeof audioUrl === 'string' && !this.isPaused && !this.isCancelled) {
         const audioTempPath = `${this.task.savePath}.audio.tmp`;
         try {
+          if (audioUrl.includes('youtube.com/watch') || audioUrl.includes('youtu.be/')) {
+            const resolvedAudio = await resolveYouTubeStream(audioUrl, 'audio', 'audio/mp4');
+            if (resolvedAudio && resolvedAudio.primaryUrl) {
+              audioUrl = resolvedAudio.primaryUrl;
+            }
+          }
           const baseBytes = this.task.downloadedBytes;
           const audioBuf = await this.downloadSecondaryAudioBuffer(audioUrl);
           if (this.isPaused || this.isCancelled) {

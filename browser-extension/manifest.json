@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "DLX — Download-X Browser Integration",
   "short_name": "DLX",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Official browser integration for DLX Desktop Download Manager. Intercepts downloads, detects accessible media, and sends torrents to DLX.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3nt+luptKObU+RgTqaPor2k+jiLpAaPMn9AEkKzeuZHJQtmSxYB5vWEJfON6vqnYk38LK4mCv5BdHPzo5giWp5Qn5AbODDtZ9ZNABOEmOci7DA5gI1zA4dB58DfrWwd2zE61+bf6wR/iQN/mDhazjc6rwYy5i9WQjWDjPkKBuc9c9gj7Ov8407SV6alr9QctBrnRTpEWPFxq4Pkepieiy+IhfZvDiJVFH8hKreT8BTVAhenWA0hQSR34cwzc7IvKaDVj0wJROugONLPwZ1KlTF2blu8noMCy31/vdFu+I2eNJY48xPJUT6TrtyBgg1qKvNKtuhoWMvMjicEmdkmZNQIDAQAB",
   "icons": {

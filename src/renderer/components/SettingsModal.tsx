@@ -408,7 +408,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Footer */}
           <div className="flex items-center justify-between gap-3 pt-4 border-t border-zinc-200 dark:border-zinc-800">
             <div className="text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
-              DLX v1.0.0 • Developed by{' '}
+              DLX v1.0.1 • Developed by{' '}
               <span className="font-semibold text-zinc-700 dark:text-zinc-300">
                 Kurui Ian Kipkemboi
               </span>

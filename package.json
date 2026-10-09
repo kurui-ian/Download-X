@@ -1,6 +1,6 @@
 {
   "name": "dlx-download-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DLX - Accelerated Multi-Part Desktop Download Manager",
   "main": "dist-electron/main/index.js",
   "author": "Kurui Ian Kipkemboi",

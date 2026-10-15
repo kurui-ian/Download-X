@@ -118,3 +118,14 @@ export interface GlobalSpeedStats {
 }
 
 export type MediaContainerFormat = 'mp4' | 'mkv' | 'webm' | 'avi' | 'mp3' | 'aac' | 'flac' | 'wav' | 'unknown';
+
+export type SpeedPreset = 'unlimited' | '1mb' | '5mb' | '10mb' | '25mb' | '50mb' | 'custom';
+
+export interface SpeedLimitConfig {
+  preset: SpeedPreset;
+  customBytesPerSec?: number;
+  enabled: boolean;
+}
+
+export type TaskEventCallback = (task: DownloadTask) => void;
+export type TaskProgressCallback = (taskId: string, progress: number, speed: number, eta: number) => void;

@@ -32,18 +32,20 @@ export const Header: React.FC<HeaderProps> = ({
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search by file name or URL..."
+          placeholder="Search by file name or URL... (Ctrl+F)"
+          aria-label="Search downloads by file name or URL"
           className="w-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 focus:border-black dark:focus:border-white rounded-lg pl-9 pr-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 outline-none transition-all font-sans"
         />
       </div>
 
       {/* Global Actions Toolbar */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5" role="toolbar" aria-label="Download controls">
         {/* Quick Theme Switcher */}
         <button
           onClick={onCycleTheme}
           className="p-1.5 text-zinc-500 hover:text-black dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
           title={`Theme: ${theme.toUpperCase()} (Click to toggle)`}
+          aria-label={`Toggle theme, current is ${theme}`}
         >
           {theme === 'light' ? (
             <Sun className="w-4 h-4 text-zinc-800" />
@@ -54,12 +56,13 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-1" />
+        <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-1" aria-hidden="true" />
 
         <button
           onClick={onResumeAll}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 rounded-lg transition-all"
           title="Resume all downloads"
+          aria-label="Resume all downloads"
         >
           <Play className="w-3 h-3" />
           <span>Resume</span>
@@ -69,6 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onPauseAll}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:text-black dark:hover:text-white bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 rounded-lg transition-all"
           title="Pause all downloads"
+          aria-label="Pause all downloads"
         >
           <Pause className="w-3 h-3" />
           <span>Pause</span>
@@ -78,16 +82,19 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onClearCompleted}
           className="p-1.5 text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg transition-colors"
           title="Clear Completed tasks"
+          aria-label="Clear completed tasks"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
 
-        <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-1" />
+        <div className="h-4 w-[1px] bg-zinc-200 dark:bg-zinc-800 mx-1" aria-hidden="true" />
 
         {/* High-Contrast Minimalist Primary CTA */}
         <button
           onClick={onOpenAddModal}
           className="flex items-center gap-1.5 px-3.5 py-1.5 bg-black dark:bg-white text-white dark:text-black hover:opacity-90 font-medium text-xs rounded-lg shadow-sm transition-all transform active:scale-95"
+          title="Add Download (Ctrl+N)"
+          aria-label="Add new download task"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>Add Download</span>

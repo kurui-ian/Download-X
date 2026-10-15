@@ -141,7 +141,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="text-[10px] font-mono font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 mb-1">
             Status
           </div>
-          <nav className="space-y-0.5">
+          <nav className="space-y-0.5" aria-label="Status filters">
             {statusItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentStatus === item.id && currentCategory === 'all';
@@ -149,6 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                   key={item.id}
                   onClick={() => onSelectStatus(item.id)}
+                  aria-label={`Filter by ${item.label} (${item.count} tasks)`}
                   className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
                     isActive
                       ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'

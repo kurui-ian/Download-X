@@ -11,27 +11,28 @@ DLX was built as a personal project inspired by download managers such as Free D
 
 ## Features
 
-* Multi-threaded downloads with support for up to 16 connections
-* HTTP Range requests for faster downloads
-* Real-time download progress and speed
-* Pause, resume and retry downloads
-* Automatic file categorization
-* Duplicate download detection
-* Clipboard integration
-* Automatic file name detection
-* Support for YouTube/oEmbed titles
-* Open downloaded files or their containing folders
-* Dark, modern desktop interface
+* **Multi-Threaded Accelerated Downloads** — Dynamic chunking using HTTP Range requests with up to 16 parallel connections per task.
+* **YouTube 1080p Full HD Resolution** — Direct high-resolution streaming via adaptive formats across VISIONOS, iOS, and Android clients without quality downgrades.
+* **Built-in ISO BMFF Transmuxer** — Automatically converts fragmented MP4 (`fMP4`) video and audio streams into standard, seekable ISO MP4 files (`ftypisom` + `moov` + `mdat`) with complete sample tables and metadata.
+* **High-Speed BitTorrent Swarm Engine** — Supports magnet links, `.torrent` files, Local Peer Discovery (LSD), and parallel piece pipelining with up to 120 peer connections.
+* **Global Speed Limiter & Presets** — Live bandwidth throttling with presets (0.5 MB/s, 1 MB/s, 2 MB/s, 5 MB/s, 10 MB/s) or custom MB/s limits.
+* **Real-time Download Metrics** — Live transfer speed, ETA calculation, progress tracking, and active connection monitoring.
+* **Multi-Select Bulk Actions** — Select multiple items to pause, resume, or delete in bulk.
+* **Smart File Categorization & Deduplication** — Automatically detects and organizes files into dedicated categories, preventing accidental duplicate downloads.
+* **Intelligent Title Resolution** — Automatically resolves video and document titles from page headers, oEmbed, and meta tags.
+* **Minimalist Modern Interface** — Clean dark and light theme options with system auto-detection.
 
 ### File Categories
 
-DLX automatically organizes downloads into categories such as:
+DLX automatically organizes downloads into specialized categories:
 
-* Videos
-* Music & Audio
-* Documents
-* Archives
-* Programs & Executables
+* **Torrents** (`.torrent`, magnet links)
+* **Videos** (`.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`, `.m4v`)
+* **Music & Audio** (`.mp3`, `.m4a`, `.wav`, `.flac`, `.ogg`, `.opus`)
+* **Documents** (`.pdf`, `.docx`, `.xlsx`, `.pptx`, `.txt`, `.csv`, `.epub`)
+* **Images** (`.jpg`, `.png`, `.webp`, `.gif`, `.svg`, `.bmp`, `.avif`)
+* **Archives** (`.zip`, `.rar`, `.7z`, `.tar`, `.gz`, `.iso`)
+* **Programs & Executables** (`.exe`, `.msi`, `.dmg`, `.pkg`, `.appimage`, `.apk`)
 
 ## Tech Stack
 

@@ -2,7 +2,7 @@ import http from 'http';
 import https from 'https';
 import { URL } from 'url';
 import path from 'path';
-import { TaskCategory, UrlInspectionResult } from './types';
+import { MediaContainerFormat, TaskCategory, UrlInspectionResult } from './types';
 import { TorrentEngine } from './TorrentEngine';
 
 export const keepAliveHttpAgent = new http.Agent({
@@ -19,6 +19,38 @@ export const keepAliveHttpsAgent = new https.Agent({
   maxFreeSockets: 16,
   rejectUnauthorized: false,
 });
+
+/**
+ * Extracts and maps query parameters from a URL string safely into a key-value record.
+ */
+export function extractUrlQueryParams(rawUrl: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.searchParams.forEach((value, key) => {
+      result[key] = value;
+    });
+  } catch {
+    // If URL is malformed, return empty record
+  }
+  return result;
+}
+
+/**
+ * Resolves standard media container format from a MIME type string.
+ */
+export function getContainerFromMime(mime: string): MediaContainerFormat {
+  const normalized = (mime || '').toLowerCase().trim();
+  if (normalized.includes('video/mp4') || normalized.includes('audio/mp4')) return 'mp4';
+  if (normalized.includes('video/webm') || normalized.includes('audio/webm')) return 'webm';
+  if (normalized.includes('video/x-matroska')) return 'mkv';
+  if (normalized.includes('video/x-msvideo') || normalized.includes('video/avi')) return 'avi';
+  if (normalized.includes('audio/mpeg') || normalized.includes('audio/mp3')) return 'mp3';
+  if (normalized.includes('audio/aac')) return 'aac';
+  if (normalized.includes('audio/flac') || normalized.includes('audio/x-flac')) return 'flac';
+  if (normalized.includes('audio/wav') || normalized.includes('audio/x-wav')) return 'wav';
+  return 'unknown';
+}
 
 export function normalizeUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();

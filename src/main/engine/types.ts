@@ -116,3 +116,5 @@ export interface GlobalSpeedStats {
   completedCount: number;
   totalUploadSpeed?: number;
 }
+
+export type MediaContainerFormat = 'mp4' | 'mkv' | 'webm' | 'avi' | 'mp3' | 'aac' | 'flac' | 'wav' | 'unknown';

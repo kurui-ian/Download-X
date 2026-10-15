@@ -31,7 +31,30 @@ interface TrackDefaults {
   defaultSampleFlags: number;
 }
 
+/**
+ * Fast validator to determine if a buffer prefix starts with a valid ISO BMFF box
+ * such as 'ftyp', 'moov', 'moof', or 'free'.
+ */
+export function validateMp4Header(buf: Buffer): boolean {
+  if (!buf || buf.length < 8) return false;
+  const type = buf.toString('ascii', 4, 8);
+  return ['ftyp', 'moov', 'moof', 'free', 'styp', 'mdat'].includes(type);
+}
+
+/**
+ * Parses consecutive ISO/IEC 14496-12 (ISOBMFF) boxes within a memory buffer range.
+ * Supports standard 32-bit box lengths, 64-bit extended sizes (size == 1), and
+ * zero-length trailing boxes (size == 0).
+ *
+ * @param buf - The raw binary buffer containing MP4 box structures
+ * @param start - Starting offset in the buffer (default: 0)
+ * @param end - Ending boundary in the buffer (default: buf.length)
+ * @returns Array of parsed box metadata structures
+ */
 function parseBoxes(buf: Buffer, start = 0, end = buf.length): Mp4Box[] {
+  if (!buf || start < 0 || end > buf.length || start >= end) {
+    return [];
+  }
   const boxes: Mp4Box[] = [];
   let offset = start;
 

@@ -65,9 +65,23 @@ export class PersistenceStore {
     return initial;
   }
 
+  private atomicWriteFileSync(filePath: string, content: string): void {
+    const tempFile = `${filePath}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tempFile, content, 'utf-8');
+      fs.renameSync(tempFile, filePath);
+    } catch (err) {
+      if (fs.existsSync(tempFile)) {
+        try { fs.unlinkSync(tempFile); } catch {}
+      }
+      // Fallback directly to direct write if rename fails across partitions
+      fs.writeFileSync(filePath, content, 'utf-8');
+    }
+  }
+
   public saveSettings(settings: AppSettings): void {
     try {
-      fs.writeFileSync(this.settingsFile, JSON.stringify(settings, null, 2), 'utf-8');
+      this.atomicWriteFileSync(this.settingsFile, JSON.stringify(settings, null, 2));
     } catch (err) {
       console.error('Failed to save settings:', err);
     }
@@ -92,9 +106,10 @@ export class PersistenceStore {
 
   public saveTasks(tasks: DownloadTask[]): void {
     try {
-      fs.writeFileSync(this.tasksFile, JSON.stringify(tasks, null, 2), 'utf-8');
+      this.atomicWriteFileSync(this.tasksFile, JSON.stringify(tasks, null, 2));
     } catch (err) {
       console.error('Failed to save tasks:', err);
     }
   }
 }
+

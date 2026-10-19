@@ -1,5 +1,5 @@
 /**
- * Formats a raw byte count into a human-readable string with units (B, KB, MB, GB, TB, PB).
+ * Formats a raw byte count into a human-readable string with units (B, KB, MB, GB, TB, PB, EB, ZB).
  *
  * @param bytes - Size in bytes (positive or zero)
  * @param decimals - Number of decimal places to include (default: 1)
@@ -10,7 +10,7 @@ export function formatBytes(bytes: number, decimals = 1): string {
 
   const k = 1024;
   const dm = Math.max(0, decimals);
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB'];
 
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   if (i < 0) return `${Math.round(bytes)} B`;
@@ -18,6 +18,7 @@ export function formatBytes(bytes: number, decimals = 1): string {
 
   return `${parseFloat((bytes / Math.pow(k, index)).toFixed(dm))} ${sizes[index]}`;
 }
+
 
 /**
  * Formats transfer rate in bytes per second into standard rate notation (e.g. 1.5 MB/s).

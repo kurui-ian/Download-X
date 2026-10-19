@@ -37,3 +37,21 @@ test('formatPercent clamps values between 0% and 100%', () => {
   assert.equal(formatPercent(100), '100%');
   assert.equal(formatPercent(120), '100%');
 });
+
+test('formatDate handles valid and invalid timestamps', () => {
+  assert.equal(formatDate(0), '--');
+  assert.equal(formatDate(-100), '--');
+  assert.equal(formatDate(NaN), '--');
+  
+  const sampleTime = new Date('2026-01-01T12:00:00Z').getTime();
+  const formatted = formatDate(sampleTime);
+  assert.equal(typeof formatted, 'string');
+  assert.notEqual(formatted, '--');
+});
+
+test('formatBytes respects custom decimal parameters', () => {
+  const bytes = 1.256 * 1024 * 1024;
+  assert.equal(formatBytes(bytes, 2), '1.26 MB');
+  assert.equal(formatBytes(bytes, 0), '1 MB');
+});
+

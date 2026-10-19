@@ -59,7 +59,24 @@ The core HTTP/HTTPS downloading engine utilizes concurrent HTTP Range requests:
 - **In-Place Segment Merging**:
   Chunks write directly to their deterministic byte offsets using non-blocking file descriptors (`fs.open` with `r+` or position offsets), avoiding expensive post-download memory concatenation.
 
+### Task Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Queued
+    Queued --> Connecting: Slot Available in Pool
+    Connecting --> Downloading: HEAD/Probe 200/206 OK
+    Connecting --> Error: Probe/DNS Failed
+    Downloading --> Paused: User Pause / Limit Exceeded
+    Paused --> Downloading: User Resume
+    Downloading --> Completed: All Chunks Verified
+    Downloading --> Error: Network Socket Failure
+    Error --> Queued: User Retry
+    Completed --> [*]
+```
+
 ---
+
 
 ## 3. High-Definition ISO BMFF & Adaptive Media Transmuxing
 

@@ -43,3 +43,30 @@ export function getCategoryBadge(category: TaskCategory): {
       return { ...common, icon: FileQuestion };
   }
 }
+
+/**
+ * Resolves the primary category for a given file name or extension.
+ */
+export function getCategoryFromExtension(filenameOrExt: string): TaskCategory {
+  if (!filenameOrExt) return 'other';
+  const clean = filenameOrExt.toLowerCase().trim();
+  const ext = clean.includes('.') ? clean.split('.').pop() || '' : clean;
+
+  const videoExts = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'flv', 'wmv'];
+  const audioExts = ['mp3', 'm4a', 'wav', 'flac', 'ogg', 'opus', 'aac', 'alac'];
+  const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'bmp', 'avif', 'ico'];
+  const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'epub', 'md'];
+  const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso', 'dmg', 'zst'];
+  const programExts = ['exe', 'msi', 'pkg', 'deb', 'rpm', 'appimage', 'apk', 'bin', 'sh', 'bat'];
+
+  if (videoExts.includes(ext)) return 'video';
+  if (audioExts.includes(ext)) return 'audio';
+  if (imageExts.includes(ext)) return 'image';
+  if (docExts.includes(ext)) return 'document';
+  if (archiveExts.includes(ext)) return 'archive';
+  if (programExts.includes(ext)) return 'program';
+  if (ext === 'torrent') return 'torrent';
+
+  return 'other';
+}
+

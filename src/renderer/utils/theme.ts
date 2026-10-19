@@ -2,6 +2,17 @@ import { useState, useEffect, useCallback } from 'react';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
+export function isSystemDarkPreferred(): boolean {
+  if (typeof window === 'undefined') return true;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+export function resolveEffectiveTheme(mode: ThemeMode): 'light' | 'dark' {
+  if (mode === 'dark') return 'dark';
+  if (mode === 'light') return 'light';
+  return isSystemDarkPreferred() ? 'dark' : 'light';
+}
+
 export function getStoredTheme(): ThemeMode {
   const stored = localStorage.getItem('dlx-theme');
   if (stored === 'light' || stored === 'dark' || stored === 'system') {
@@ -11,8 +22,8 @@ export function getStoredTheme(): ThemeMode {
 }
 
 export function applyTheme(mode: ThemeMode): boolean {
-  const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const isDark = mode === 'dark' || (mode === 'system' && isSystemDark);
+  const isDark = resolveEffectiveTheme(mode) === 'dark';
+
 
   if (isDark) {
     document.documentElement.classList.add('dark');

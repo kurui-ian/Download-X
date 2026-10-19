@@ -127,5 +127,23 @@ export interface SpeedLimitConfig {
   enabled: boolean;
 }
 
+export interface TransferSnapshot {
+  timestamp: number;
+  downloadSpeed: number; // bytes/sec
+  uploadSpeed: number; // bytes/sec
+  activeConnections: number;
+  pendingBytes: number;
+}
+
+export interface TaskDiagnostics {
+  dnsLookupDurationMs?: number;
+  tcpConnectDurationMs?: number;
+  tlsHandshakeDurationMs?: number;
+  firstByteDurationMs?: number;
+  retryAttempts: number;
+  socketReuseCount: number;
+}
+
 export type TaskEventCallback = (task: DownloadTask) => void;
 export type TaskProgressCallback = (taskId: string, progress: number, speed: number, eta: number) => void;
+

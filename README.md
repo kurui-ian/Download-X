@@ -92,11 +92,34 @@ npm run dev
 npm run build
 ```
 
+### Packaging & Portable Build
+
+```bash
+# Package into Windows NSIS installer and portable standalone executable
+npm run dist
+```
+
 ## How It Works
 
 DLX splits supported downloads into multiple parts and downloads them concurrently when the server supports HTTP Range requests.
 
 Each download is managed by the download queue, while the Electron main process handles the actual file operations. The React renderer is responsible for displaying the queue, progress, categories, and controls.
+
+### Performance Highlights
+
+* **Pre-warmed Socket Pools**: Reusable HTTP/HTTPS keep-alive agents eliminate repetitive TCP and TLS handshakes across segmented chunks.
+* **In-Place Non-blocking File Writes**: Segments stream directly to predetermined byte offsets on the target disk, eliminating high-memory post-download concatenation phases.
+* **Throttled IPC Broadcasts**: Progress ticks are aggregated at 100ms intervals, preserving 60fps UI responsiveness during saturating gigabit transfers.
+
+## Configuration & Settings
+
+DLX provides granular controls accessible via the settings modal:
+
+* `maxConcurrentDownloads` — Limits simultaneous active downloads to preserve bandwidth and system resources (default: 3).
+* `defaultConnections` — Configures number of concurrent range connections per file (range: 1 - 32, default: 8).
+* `speedLimitBytesPerSec` — Configures dynamic bandwidth throttling with quick presets.
+* `monitorClipboard` — Automatically detects downloadable URLs and magnet links copied to the system clipboard.
+* `minimizeToTray` — Keeps background transfers running silently in the system notification area.
 
 ## Browser Integration
 
@@ -114,8 +137,9 @@ See [`browser-extension/README.md`](browser-extension/README.md) for installatio
 
 ## Current Status
 
-DLX is currently a work in progress. The core download functionality is working, but the application is still being improved, especially the user interface and overall user experience.
+DLX is actively maintained. The core download acceleration and torrent engines are operational, with ongoing UX polish, expanded extension hooks, and platform portability improvements.
 
 ## License
 
 This project is licensed under the MIT License.
+

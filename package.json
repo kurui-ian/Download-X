@@ -6,7 +6,8 @@
   "author": "Kurui Ian Kipkemboi",
   "license": "MIT",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.js",
+    "dev:web": "vite",
     "build:renderer": "tsc && vite build",
     "build:main": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:main",

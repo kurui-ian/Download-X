@@ -64,8 +64,9 @@ export const SegmentedBar: React.FC<SegmentedBarProps> = ({ chunks, overallProgr
           return (
             <div
               key={chunk.id}
-              className="relative flex-1 h-full bg-zinc-100 dark:bg-zinc-950 rounded-sm overflow-hidden group cursor-help transition-colors"
-              title={`Thread #${chunk.id + 1}: ${formatBytes(chunk.downloadedBytes)} / ${formatBytes(chunk.totalBytes)} (${chunkPercent.toFixed(0)}%)`}
+              className="relative h-full bg-zinc-100 dark:bg-zinc-950 rounded-sm overflow-hidden group cursor-help transition-all duration-300"
+              style={{ flex: `${Math.max(1, chunk.totalBytes)} 1 0%` }}
+              title={`Part #${chunk.id + 1}: ${formatBytes(chunk.downloadedBytes)} / ${formatBytes(chunk.totalBytes)} (${chunkPercent.toFixed(0)}%)`}
             >
               <div
                 className={`h-full ${chunkColor} transition-all duration-200 rounded-sm relative overflow-hidden`}
@@ -81,7 +82,7 @@ export const SegmentedBar: React.FC<SegmentedBarProps> = ({ chunks, overallProgr
       </div>
 
       <div className="flex items-center justify-between text-[10px] text-zinc-500 dark:text-zinc-400 px-0.5 font-mono">
-        <span>{chunks.length} Parallel Streams</span>
+        <span>{isDownloading ? `${chunks.filter((c) => c.status === 'downloading').length} Active Streams` : `${chunks.length} Parallel Streams`}</span>
         <span>
           {chunks.filter((c) => c.status === 'completed').length} of {chunks.length} parts assembled
         </span>

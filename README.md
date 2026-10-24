@@ -12,6 +12,7 @@ DLX was built as a personal project inspired by download managers such as Free D
 ## Features
 
 * **Multi-Threaded Accelerated Downloads** — Dynamic chunking using HTTP Range requests with up to 16 parallel connections per task.
+* **Dynamic Work-Stealing Chunk Engine** — Automatically detects idle thread connections and splits remaining byte ranges on the fly, eliminating idle workers and ensuring continuous 100% bandwidth saturation.
 * **YouTube 1080p Full HD Resolution** — Direct high-resolution streaming via adaptive formats across VISIONOS, iOS, and Android clients without quality downgrades.
 * **Built-in ISO BMFF Transmuxer** — Automatically converts fragmented MP4 (`fMP4`) video and audio streams into standard, seekable ISO MP4 files (`ftypisom` + `moov` + `mdat`) with complete sample tables and metadata.
 * **High-Speed BitTorrent Swarm Engine** — Supports magnet links, `.torrent` files, Local Peer Discovery (LSD), and parallel piece pipelining with up to 120 peer connections.

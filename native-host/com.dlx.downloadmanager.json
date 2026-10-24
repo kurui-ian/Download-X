@@ -1,7 +1,7 @@
 {
   "name": "com.dlx.downloadmanager",
   "description": "DLX (Download-X) Native Messaging Host",
-  "path": "C:\\Users\\Kurui\\Desktop\\DLX\\native-host\\dlx-native-host.bat",
+  "path": "C:\\Projects\\Download-X\\native-host\\dlx-native-host.bat",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://poalfflpopjbfnhibkondgcgogpmgkbh/"

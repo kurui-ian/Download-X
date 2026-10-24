@@ -1,5 +1,7 @@
 {
-  "exePath": "C:\\Users\\Kurui\\Desktop\\DLX\\release\\win-unpacked\\DLX.exe",
-  "args": [],
-  "updatedAt": 1791402128204
+  "exePath": "C:\\Projects\\Download-X\\node_modules\\electron\\dist\\electron.exe",
+  "args": [
+    "C:\\Projects\\Download-X"
+  ],
+  "updatedAt": 1792848610294
 }

@@ -58,6 +58,8 @@ The core HTTP/HTTPS downloading engine utilizes concurrent HTTP Range requests:
   Connections utilize keep-alive connection pooling (`keepAliveHttpAgent` and `keepAliveHttpsAgent`) with pre-warmed TCP sockets and socket reuse to eliminate TLS handshake latency on successive chunks.
 - **In-Place Segment Merging**:
   Chunks write directly to their deterministic byte offsets using non-blocking file descriptors (`fs.open` with `r+` or position offsets), avoiding expensive post-download memory concatenation.
+- **Dynamic Work-Stealing & Range Splitting**:
+  Whenever any chunk completes ahead of others, the idle worker inspects remaining active chunks, identifies the largest un-downloaded byte buffer, splits it in half at a deterministic boundary, and immediately downloads the tail range in parallel. This guarantees zero thread idling and maintains full bandwidth saturation until the file completes.
 
 ### Task Lifecycle State Machine
 

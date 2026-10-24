@@ -37,6 +37,8 @@ export class Downloader extends EventEmitter {
   private speedSamples: Array<{ time: number; bytes: number }> = [];
   private maxRetriesPerChunk: number = 5;
   private chunkRetryCounts: Map<number, number> = new Map();
+  private nextChunkId: number = 0;
+  private lastStealCheckTime: number = Date.now();
 
   // Speed throttling state
   private speedLimitBytesPerSec: number = 0;
@@ -214,6 +216,8 @@ export class Downloader extends EventEmitter {
       // 2. Initialize chunks if not already created
       if (!this.task.chunks || this.task.chunks.length === 0) {
         this.initializeChunks();
+      } else {
+        this.nextChunkId = Math.max(...this.task.chunks.map((c) => c.id), 0) + 1;
       }
 
       // 3. Start speed tracking ticker
@@ -285,6 +289,7 @@ export class Downloader extends EventEmitter {
     }
 
     this.task.chunks = chunks;
+    this.nextChunkId = chunks.length;
   }
 
   private attemptRename(betterName: string, force: boolean = false): void {
@@ -490,10 +495,31 @@ export class Downloader extends EventEmitter {
 
         try {
           const writeOffset = chunk.startByte + chunk.downloadedBytes;
-          fs.writeSync(this.fd, buffer, 0, buffer.length, writeOffset);
-          chunk.downloadedBytes += buffer.length;
-          this.task.downloadedBytes += buffer.length;
-          this.applyStreamThrottle(res, buffer.length);
+          if (writeOffset > chunk.endByte) {
+            res.destroy();
+            return;
+          }
+
+          let writeBuffer = buffer;
+          if (writeOffset + buffer.length - 1 > chunk.endByte) {
+            const allowedLen = chunk.endByte - writeOffset + 1;
+            writeBuffer = buffer.subarray(0, allowedLen);
+          }
+
+          fs.writeSync(this.fd, writeBuffer, 0, writeBuffer.length, writeOffset);
+          chunk.downloadedBytes += writeBuffer.length;
+          this.task.downloadedBytes += writeBuffer.length;
+          this.applyStreamThrottle(res, writeBuffer.length);
+
+          if (chunk.startByte + chunk.downloadedBytes > chunk.endByte) {
+            chunk.status = 'completed';
+            this.activeResponses.delete(chunk.id);
+            this.activeRequests.delete(chunk.id);
+            res.destroy();
+            this.emit('chunk-complete', chunk);
+            this.attemptWorkSteal();
+            this.checkCompletion();
+          }
         } catch (err: any) {
           res.destroy();
           this.handleError(err);
@@ -508,6 +534,7 @@ export class Downloader extends EventEmitter {
         if (chunk.downloadedBytes >= chunk.totalBytes) {
           chunk.status = 'completed';
           this.emit('chunk-complete', chunk);
+          this.attemptWorkSteal();
           this.checkCompletion();
         } else {
           this.retryChunk(chunk, new Error('Chunk connection closed prematurely'));
@@ -941,6 +968,95 @@ export class Downloader extends EventEmitter {
     }
   }
 
+  private attemptWorkSteal(): void {
+    if (
+      this.isPaused ||
+      this.isCancelled ||
+      !this.task.supportsRanges ||
+      this.task.status !== 'downloading' ||
+      this.task.fileSize <= 0 ||
+      (this.task as any).isHlsStream ||
+      this.task.protocol === 'torrent'
+    ) {
+      return;
+    }
+
+    const maxActiveThreads = this.task.threadCount || 8;
+    const maxChunksLimit = Math.min(32, Math.max(16, maxActiveThreads * 2));
+
+    // Dynamic split threshold: at least 1MB, scaled to file size
+    const minSplitThreshold = Math.max(
+      1024 * 1024,
+      Math.min(4 * 1024 * 1024, Math.floor(this.task.fileSize / 128))
+    );
+
+    while (
+      this.activeRequests.size < maxActiveThreads &&
+      this.task.chunks.length < maxChunksLimit &&
+      !this.isPaused &&
+      !this.isCancelled
+    ) {
+      // Find the currently downloading chunk with the largest remaining bytes
+      let bestCandidate: ChunkInfo | null = null;
+      let maxRemaining = 0;
+
+      for (const chunk of this.task.chunks) {
+        if (chunk.status === 'downloading' && this.activeRequests.has(chunk.id)) {
+          const currentHead = chunk.startByte + chunk.downloadedBytes;
+          const remaining = chunk.endByte - currentHead + 1;
+          if (remaining > maxRemaining && remaining >= minSplitThreshold) {
+            maxRemaining = remaining;
+            bestCandidate = chunk;
+          }
+        }
+      }
+
+      if (!bestCandidate) {
+        break; // No active chunk large enough to warrant splitting
+      }
+
+      const currentHead = bestCandidate.startByte + bestCandidate.downloadedBytes;
+      const splitBytes = Math.floor(maxRemaining / 2);
+      if (splitBytes < 256 * 1024) {
+        break;
+      }
+
+      const newCandidateEnd = currentHead + splitBytes - 1;
+      const newChunkStart = newCandidateEnd + 1;
+      const newChunkEnd = bestCandidate.endByte;
+
+      // Shorten candidate chunk's endByte and totalBytes
+      bestCandidate.endByte = newCandidateEnd;
+      bestCandidate.totalBytes = newCandidateEnd - bestCandidate.startByte + 1;
+
+      // Allocate the new stolen tail chunk
+      const newChunkId = this.nextChunkId++;
+      const newChunkTotal = newChunkEnd - newChunkStart + 1;
+      const newChunk: ChunkInfo = {
+        id: newChunkId,
+        startByte: newChunkStart,
+        endByte: newChunkEnd,
+        downloadedBytes: 0,
+        totalBytes: newChunkTotal,
+        status: 'pending',
+        speed: 0,
+      };
+
+      // Place new chunk directly following candidate in array
+      const candidateIdx = this.task.chunks.findIndex((c) => c.id === bestCandidate.id);
+      if (candidateIdx !== -1) {
+        this.task.chunks.splice(candidateIdx + 1, 0, newChunk);
+      } else {
+        this.task.chunks.push(newChunk);
+      }
+
+      this.emit('progress', this.task);
+
+      // Immediately initiate download of the stolen tail chunk
+      this.downloadChunk(newChunk);
+    }
+  }
+
   private isCompleting: boolean = false;
 
   private async downloadSecondaryAudioBuffer(audioUrl: string): Promise<Buffer> {
@@ -1165,6 +1281,12 @@ export class Downloader extends EventEmitter {
       } else {
         this.task.progress = 0;
         this.task.eta = 0;
+      }
+
+      // Periodically trigger work-stealing if there are idle connection slots
+      if (now - this.lastStealCheckTime >= 1200) {
+        this.lastStealCheckTime = now;
+        this.attemptWorkSteal();
       }
 
       this.emit('progress', this.task);

@@ -147,8 +147,9 @@ export function getRequestHeaders(
   };
 
   if (profile === 0) {
+    // Standard desktop file download GET requests: send Referer, no Origin header.
+    // Sending Origin on standard GET triggers CORS pre-flight / anti-leech 403 on CDNs & mirrors.
     baseHeaders['Referer'] = referer;
-    baseHeaders['Origin'] = origin;
   } else if (profile === 1) {
     // Standard <video> / navigation request: Referer only, no Origin header
     baseHeaders['Referer'] = referer;
@@ -179,12 +180,23 @@ export function isOneTimeOrSignedUrl(urlStr: string): boolean {
     const parsed = new URL(urlStr);
     const search = parsed.search.toLowerCase();
     const pathname = parsed.pathname.toLowerCase();
-    if (pathname.includes('/tunnel') || pathname.includes('/stream') || pathname.includes('/dl') || pathname.includes('/get')) {
+    // Only treat specialized video streaming tunnel proxies or explicit token signatures as one-time/signed.
+    // Do NOT match general application download paths containing '/dl' or '/get' (e.g. dl.google.com, dl.discordapp.net, /dl/app.exe).
+    if (pathname.includes('/tunnel/video') || pathname.includes('/stream/video')) {
       return true;
     }
-    return ['sig=', 'signature=', 'exp=', 'expires=', 'token=', 'auth=', 'ticket=', 'key=', 'sec='].some((k) =>
-      search.includes(k)
-    );
+    return [
+      'sig=',
+      'signature=',
+      'x-amz-signature=',
+      'x-goog-signature=',
+      'exp=',
+      'expires=',
+      'token=',
+      'auth=',
+      'ticket=',
+      'sec='
+    ].some((k) => search.includes(k));
   } catch {
     return false;
   }
@@ -1546,6 +1558,12 @@ export async function inspectUrl(targetUrl: string, maxRedirects = 8, referrer?:
             const fileSize = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
             const acceptRanges = res.headers['accept-ranges'];
             const supportsRanges = acceptRanges === 'bytes';
+
+            // Many CDNs (Cloudflare, Azure, S3) do not return 'accept-ranges: bytes' on HEAD,
+            // but fully accept Range GET requests. Verify before disabling parallel streams.
+            if (!supportsRanges && fileSize > 256 * 1024) {
+              return probeGetRange(currentUrl);
+            }
 
             finishInspection(currentUrl, fileSize, supportsRanges, mimeType, res.headers);
           }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   DownloadTask, 
   TaskStatus, 
@@ -13,7 +13,7 @@ import { DownloadList } from './components/DownloadList';
 import { AddDownloadModal } from './components/AddDownloadModal';
 import { SettingsModal } from './components/SettingsModal';
 import { useTheme } from './utils/theme';
-import { ArrowDownToLine } from 'lucide-react';
+import { ArrowDownToLine, Zap } from 'lucide-react';
 
 export const App: React.FC = () => {
   const { theme, setTheme, cycleTheme } = useTheme();
@@ -47,7 +47,7 @@ export const App: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
-  // Initial load
+  // Initial load & IPC Subscriptions
   useEffect(() => {
     if (window.electronAPI) {
       window.electronAPI.getTasks().then(setTasks).catch(console.error);
@@ -86,7 +86,7 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Drag and Drop Handling (for .torrent files, links, magnets)
+  // Drag and Drop Handling (for .torrent files, URLs, magnets)
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
       e.preventDefault();
@@ -116,7 +116,7 @@ export const App: React.FC = () => {
       e.stopPropagation();
       setIsDraggingOver(false);
 
-      // 1. Check if files were dropped (.torrent file)
+      // Check if .torrent file was dropped
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         const file = e.dataTransfer.files[0];
         let filePath = '';
@@ -134,7 +134,7 @@ export const App: React.FC = () => {
         }
       }
 
-      // 2. Check if URL, text, or Magnet link was dropped
+      // Check if URL or Magnet link was dropped
       if (e.dataTransfer) {
         const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text');
         if (text && text.trim()) {
@@ -155,12 +155,13 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Keyboard shortcuts
+  // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault();
         setAddModalInitialUrl(undefined);
+        setAddModalInitialData(undefined);
         setIsAddModalOpen(true);
       }
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
@@ -318,8 +319,8 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-black text-zinc-900 dark:text-zinc-100 font-sans transition-colors relative">
-      {/* Left Sidebar */}
+    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-obsidian-950 text-zinc-900 dark:text-zinc-100 font-sans transition-colors relative">
+      {/* Left Navigation & Telemetry Sidebar */}
       <Sidebar
         currentStatus={statusFilter}
         currentCategory={categoryFilter}
@@ -332,8 +333,9 @@ export const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-black transition-colors">
+      {/* Main Content Workspace */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-obsidian-950 transition-colors">
+        {/* Custom Frameless Window Header */}
         <Header
           onOpenAddModal={() => {
             setAddModalInitialUrl(undefined);
@@ -349,6 +351,7 @@ export const App: React.FC = () => {
           onCycleTheme={cycleTheme}
         />
 
+        {/* Downloads Feed */}
         <DownloadList
           tasks={filteredTasks}
           onPause={handlePause}
@@ -391,19 +394,19 @@ export const App: React.FC = () => {
         onThemeChange={setTheme}
       />
 
-      {/* Fun Minimalist Drag and Drop Overlay */}
+      {/* Obsidian Drag and Drop Technical Overlay */}
       {isDraggingOver && (
-        <div className="fixed inset-0 z-[100] bg-white/85 dark:bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-8 pointer-events-none transition-all">
-          <div className="border-2 border-dashed border-black dark:border-white rounded-3xl w-full max-w-md h-64 flex flex-col items-center justify-center gap-3.5 bg-zinc-50/70 dark:bg-zinc-950/70 shadow-2xl animate-drop-pulse">
-            <div className="w-14 h-14 rounded-2xl bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-lg">
-              <ArrowDownToLine className="w-7 h-7 animate-download-bounce" />
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex flex-col items-center justify-center p-8 pointer-events-none transition-all">
+          <div className="border-2 border-dashed border-cyan-500 rounded-3xl w-full max-w-md h-64 flex flex-col items-center justify-center gap-3.5 bg-obsidian-900/90 shadow-glow-cyan animate-drop-pulse">
+            <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shadow-lg">
+              <ArrowDownToLine className="w-8 h-8 animate-download-bounce text-cyan-400" />
             </div>
             <div className="text-center">
-              <h2 className="text-base font-bold text-zinc-900 dark:text-white mb-0.5">
-                Drop to Download
+              <h2 className="text-base font-bold text-white mb-0.5 tracking-tight">
+                Drop to Accelerate Download
               </h2>
-              <p className="text-xs text-zinc-500 font-mono">
-                Release .torrent file or download link here
+              <p className="text-xs text-zinc-400 font-mono">
+                Release .torrent file, magnet link, or web URL here
               </p>
             </div>
           </div>

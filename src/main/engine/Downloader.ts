@@ -515,7 +515,14 @@ export class Downloader extends EventEmitter {
             chunk.status = 'completed';
             this.activeResponses.delete(chunk.id);
             this.activeRequests.delete(chunk.id);
+            res.removeAllListeners('data');
+            res.removeAllListeners('end');
+            res.removeAllListeners('error');
+            res.on('error', () => {});
+            req.removeAllListeners('error');
+            req.on('error', () => {});
             res.destroy();
+            req.destroy();
             this.emit('chunk-complete', chunk);
             this.attemptWorkSteal();
             this.checkCompletion();
@@ -532,10 +539,12 @@ export class Downloader extends EventEmitter {
         if (this.isPaused || this.isCancelled) return;
 
         if (chunk.downloadedBytes >= chunk.totalBytes) {
-          chunk.status = 'completed';
-          this.emit('chunk-complete', chunk);
-          this.attemptWorkSteal();
-          this.checkCompletion();
+          if (chunk.status !== 'completed') {
+            chunk.status = 'completed';
+            this.emit('chunk-complete', chunk);
+            this.attemptWorkSteal();
+            this.checkCompletion();
+          }
         } else {
           this.retryChunk(chunk, new Error('Chunk connection closed prematurely'));
         }
@@ -940,6 +949,9 @@ export class Downloader extends EventEmitter {
 
   private retryChunk(chunk: ChunkInfo, err: Error): void {
     if (this.isPaused || this.isCancelled) return;
+    if (chunk.status === 'completed' || chunk.downloadedBytes >= chunk.totalBytes) {
+      return;
+    }
 
     const currentRetries = this.chunkRetryCounts.get(chunk.id) || 0;
     if (currentRetries < this.maxRetriesPerChunk) {

@@ -69,8 +69,13 @@ function createMainWindow() {
     height: 720,
     minWidth: 850,
     minHeight: 550,
-    backgroundColor: '#020617',
-    frame: true, // Native titlebar with dark controls
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#09090b' : '#ffffff',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: nativeTheme.shouldUseDarkColors ? '#09090b' : '#f4f4f5',
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#a1a1aa' : '#52525b',
+      height: 42,
+    },
     title: 'DLX - Download Manager',
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
@@ -94,6 +99,13 @@ function createMainWindow() {
       mainWindow?.loadFile(path.join(app.getAppPath(), 'dist/index.html'));
     });
   }
+
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('window:maximized-change', true);
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('window:maximized-change', false);
+  });
 
   mainWindow.on('close', (event) => {
     const settings = store.getSettings();
@@ -337,9 +349,39 @@ function setupIpc() {
   ipcMain.handle('app:set-theme', (_e, theme: 'system' | 'light' | 'dark') => {
     nativeTheme.themeSource = theme;
     if (mainWindow) {
-      mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff');
+      const isDark = nativeTheme.shouldUseDarkColors;
+      mainWindow.setBackgroundColor(isDark ? '#09090b' : '#ffffff');
+      if (typeof (mainWindow as any).setTitleBarOverlay === 'function') {
+        try {
+          (mainWindow as any).setTitleBarOverlay({
+            color: isDark ? '#09090b' : '#f4f4f5',
+            symbolColor: isDark ? '#a1a1aa' : '#52525b',
+            height: 42,
+          });
+        } catch {}
+      }
     }
     return true;
+  });
+
+  ipcMain.handle('window:minimize', () => {
+    mainWindow?.minimize();
+    return true;
+  });
+  ipcMain.handle('window:maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow?.maximize();
+    }
+    return mainWindow?.isMaximized() || false;
+  });
+  ipcMain.handle('window:close', () => {
+    mainWindow?.close();
+    return true;
+  });
+  ipcMain.handle('window:is-maximized', () => {
+    return mainWindow?.isMaximized() || false;
   });
 
   ipcMain.handle('bridge:status', () => {

@@ -59,7 +59,12 @@ export interface ElectronAPI {
   getPathForFile: (file: File) => string;
   setNativeTheme: (theme: 'system' | 'light' | 'dark') => Promise<boolean>;
   getBridgeStatus?: () => Promise<{ registered: boolean; hostName: string; extensionId: string; manifestPath: string }>;
-  registerNativeHost?: (customExtId?: string) => Promise<{ registered: boolean; hostName: string; extensionId: string; manifestPath: string }>;
+    registerNativeHost?: (customExtId?: string) => Promise<{ registered: boolean; hostName: string; extensionId: string; manifestPath: string }>;
+  windowMinimize?: () => Promise<boolean>;
+  windowMaximize?: () => Promise<boolean>;
+  windowClose?: () => Promise<boolean>;
+  windowIsMaximized?: () => Promise<boolean>;
+  onWindowMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
 }
 
 const api: ElectronAPI = {
@@ -114,7 +119,16 @@ const api: ElectronAPI = {
   },
   setNativeTheme: (theme: 'system' | 'light' | 'dark') => ipcRenderer.invoke('app:set-theme', theme),
   getBridgeStatus: () => ipcRenderer.invoke('bridge:status'),
-  registerNativeHost: (customExtId?: string) => ipcRenderer.invoke('bridge:register-host', customExtId),
+    registerNativeHost: (customExtId?: string) => ipcRenderer.invoke('bridge:register-host', customExtId),
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowMaximize: () => ipcRenderer.invoke('window:maximize'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+  windowIsMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  onWindowMaximizedChange: (callback: (isMaximized: boolean) => void) => {
+    const handler = (_event: IpcRendererEvent, isMaximized: boolean) => callback(isMaximized);
+    ipcRenderer.on('window:maximized-change', handler);
+    return () => ipcRenderer.removeListener('window:maximized-change', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

@@ -62,3 +62,4 @@ test('cleanUrlInput strips quotes and extraneous whitespace', () => {
   assert.equal(cleanUrlInput("'https://example.com/file.zip'"), 'https://example.com/file.zip');
   assert.equal(cleanUrlInput(''), '');
 });
+

@@ -59,3 +59,4 @@ test('canResumeTask requires paused/error status and range support', () => {
   assert.equal(canResumeTask({ status: 'completed', supportsRanges: true }), false);
   assert.equal(canResumeTask({ status: 'downloading', supportsRanges: true }), false);
 });
+

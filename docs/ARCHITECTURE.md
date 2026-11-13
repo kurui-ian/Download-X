@@ -112,3 +112,24 @@ The browser extension communicates with DLX via the Chrome Native Messaging prot
 - Background worker listens for `chrome.downloads.onCreated` and custom webRequest video/audio mime sniffers.
 - Messages are serialized as standard 32-bit length-prefixed JSON payloads over standard input/output (`stdin`/`stdout`).
 - Seamless one-click interception captures video streams directly from web pages with user-selected quality presets.
+
+### Native Messaging IPC Protocol Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Browser User
+    participant Ext as Browser Extension
+    participant Host as Native Host (STDIN/STDOUT)
+    participant Engine as Main Process Engine
+    participant UI as React Desktop UI
+
+    User->>Ext: Intercept Download / Sniff Media
+    Ext->>Host: Length-prefixed JSON-RPC
+    Host->>Engine: Forward Bridge Payload
+    Engine->>Engine: Validate URL & Message Schema
+    Engine->>UI: Emit IPC modal/task event
+    UI-->>User: Display Confirmation Dialog
+    User->>UI: Confirm Settings & Start
+    UI->>Engine: Dispatch Task Enqueue
+```

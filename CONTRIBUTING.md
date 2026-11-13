@@ -35,10 +35,18 @@ DLX is built as an accelerated, high-performance multi-part desktop download man
 
 ## 🧪 Testing & Verification
 
+DLX features a fast, zero-dependency unit test suite powered by Node.js's native test runner (`node:test`) and strict assertion library (`node:assert/strict`).
+
+### Test Suite Structure
+- `tests/chunkStealing.test.ts`: Verifies dynamic work-stealing algorithms, boundary adjacency, and fragmentation prevention.
+- `tests/formatters.test.ts`: Validates byte scales, transfer rates, ETA representations, and timestamp formatting.
+- `tests/statusGuards.test.ts`: Covers task state machine transitions, active network predicates, and resume guards.
+- `tests/urlUtils.test.ts`: Tests HTTP, HTTPS, and Magnet URI parsing, domain extraction, and file candidate resolutions.
+
 Before submitting pull requests or making commits, verify that your changes pass all build checks and unit tests:
 
 ```bash
-# Run unit tests
+# Run all unit tests
 npm test
 
 # Type-check and compile renderer process
@@ -47,7 +55,7 @@ npm run build:renderer
 # Type-check and compile main process
 npm run build:main
 
-# Full build verification
+# Full build verification (renderer + main bundle)
 npm run build
 ```
 

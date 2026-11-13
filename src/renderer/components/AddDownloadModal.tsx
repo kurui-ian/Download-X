@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { DownloadTask, UrlInspectionResult, BrowserModalPayload } from '../types';
 import { formatBytes } from '../utils/formatters';
+import { isValidDownloadUrl, cleanUrlInput } from '../utils/urlUtils';
 
 interface AddDownloadModalProps {
   isOpen: boolean;
@@ -84,13 +85,8 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       } else if (window.electronAPI?.readClipboard) {
         window.electronAPI.readClipboard().then((clip) => {
           if (clip) {
-            const clean = clip.trim();
-            if (
-              clean.startsWith('http://') || 
-              clean.startsWith('https://') || 
-              clean.startsWith('magnet:?') || 
-              clean.toLowerCase().endsWith('.torrent')
-            ) {
+            const clean = cleanUrlInput(clip);
+            if (isValidDownloadUrl(clean) || clean.toLowerCase().endsWith('.torrent')) {
               setUrl(clean);
               triggerInspect(clean);
             }
@@ -108,13 +104,8 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   }, [isOpen, defaultSaveDir, defaultConnections, initialUrl, initialData]);
 
   const triggerInspect = async (targetUrl: string, existingName?: string, customReferrer?: string) => {
-    const clean = targetUrl.trim();
-    if (
-      !clean.startsWith('http://') && 
-      !clean.startsWith('https://') && 
-      !clean.startsWith('magnet:?') && 
-      !clean.toLowerCase().endsWith('.torrent')
-    ) {
+    const clean = cleanUrlInput(targetUrl);
+    if (!isValidDownloadUrl(clean) && !clean.toLowerCase().endsWith('.torrent')) {
       return;
     }
 

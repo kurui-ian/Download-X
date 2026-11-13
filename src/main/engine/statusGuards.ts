@@ -1,4 +1,4 @@
-import { TaskStatus, TaskCategory, TaskProtocol, DownloadTask } from './types';
+import type { TaskStatus, TaskCategory, TaskProtocol, DownloadTask } from './types.ts';
 
 /**
  * Checks whether a download task is currently in an active network transfer state.
